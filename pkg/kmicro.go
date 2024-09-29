@@ -2,9 +2,11 @@ package kmicro
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
+	"strconv"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
@@ -25,9 +27,14 @@ type KMicro struct {
 }
 
 const (
-	natsCon = iota
-	traceProviderKey
+	callDepthCtxKey = iota
 )
+
+var (
+	maxCallDepthErr = errors.New("max call depth reached")
+)
+
+const headerCallDepthKey = "kmicro_callDepth"
 
 type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
@@ -102,6 +109,13 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 		go func() {
 			propagator := propagation.TraceContext{}
 			ctx := propagator.Extract(ctx, propagation.HeaderCarrier(req.Headers()))
+			callDepth := 0
+			callDepthStr := req.Headers().Get(headerCallDepthKey)
+			if callDepthStr != "" {
+				val, _ := strconv.Atoi(callDepthStr)
+				callDepth = val
+			}
+			ctx = context.WithValue(ctx, callDepthCtxKey, callDepth)
 			tracer := km.tracerProvider.Tracer("")
 			ctx, span := tracer.Start(ctx, "handle: "+subject)
 			defer span.End()
@@ -121,7 +135,20 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 // the given ctx should be returned by getContext from kmicro
 func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byte, error) {
 	header := make(nats.Header)
-	// tracing
+
+	// prevent infinte loops
+	callDepth := 0
+	callDepthStr, ok := ctx.Value(callDepthCtxKey).(string)
+	if ok {
+		val, _ := strconv.Atoi(callDepthStr)
+		callDepth = val + 1
+	}
+	if callDepth > 20 {
+		return nil, maxCallDepthErr
+	}
+	header.Set(headerCallDepthKey, strconv.Itoa(callDepth))
+
+	// setup tracing
 	propagator := propagation.TraceContext{}
 	tracer := km.tracerProvider.Tracer("")
 	ctx, span := tracer.Start(ctx, "call: "+endpoint)

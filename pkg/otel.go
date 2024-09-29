@@ -17,9 +17,6 @@ import (
 func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Context) error, tracerProvider *trace.TracerProvider, err error) {
 	var shutdownFuncs []func(context.Context) error
 
-	// shutdown calls cleanup functions registered via shutdownFuncs.
-	// The errors from the calls are joined.
-	// Each registered cleanup will be invoked once.
 	shutdown = func(ctx context.Context) error {
 		var err error
 		for _, fn := range shutdownFuncs {
@@ -29,16 +26,13 @@ func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Co
 		return err
 	}
 
-	// handleErr calls shutdown for cleanup and makes sure that all errors are returned.
 	handleErr := func(inErr error) {
 		err = errors.Join(inErr, shutdown(ctx))
 	}
 
-	// Set up propagator.
 	prop := newPropagator()
 	otel.SetTextMapPropagator(prop)
 
-	// Set up trace provider.
 	trProvider, err := newTracerProvider(svcName, ctx)
 	if err != nil {
 		handleErr(err)
@@ -57,7 +51,6 @@ func newPropagator() propagation.TextMapPropagator {
 }
 
 func newTracerProvider(svcName string, ctx context.Context) (*trace.TracerProvider, error) {
-	// Ensure default SDK resources and the required service name are set.
 	r, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
@@ -66,6 +59,7 @@ func newTracerProvider(svcName string, ctx context.Context) (*trace.TracerProvid
 		),
 	)
 
+	// with insecure is needed to enable passing logs to https grpcs endpoints
 	traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithInsecure())
 	if err != nil {
 		return nil, err
