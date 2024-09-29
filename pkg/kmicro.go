@@ -10,7 +10,8 @@ import (
 	"github.com/nats-io/nats.go/micro"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/trace"
+	sdkTrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type KMicro struct {
@@ -18,10 +19,9 @@ type KMicro struct {
 	svcName        string
 	svcVersion     string
 	nats           *nats.Conn
-	svc            micro.Service
-	logger         slog.Logger
+	natsSvc        micro.Service
 	otelShutdown   func() error
-	tracerProvider *trace.TracerProvider
+	tracerProvider *sdkTrace.TracerProvider
 }
 
 const (
@@ -56,20 +56,20 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 		return err
 	}
 	km.nats = nc
-	km.svc, err = micro.AddService(nc, micro.Config{
+	km.natsSvc, err = micro.AddService(nc, micro.Config{
 		Name:    km.svcName,
 		Version: km.svcVersion,
 		DoneHandler: func(srv micro.Service) {
 			info := srv.Info()
-			fmt.Printf("stopped service %q with ID %q\n", info.Name, info.ID)
+			slog.Info("stopped service", "serivce", info.Name, "serviceId", info.ID)
 		},
 		ErrorHandler: func(srv micro.Service, err *micro.NATSError) {
 			info := srv.Info()
-			fmt.Printf("Service %q returned an error on subject %q: %s", info.Name, err.Subject, err.Description)
+			slog.Info("Service returned an error on subject", "service", info.Name, "subject", err.Subject, "error", err.Description)
 		},
 	})
 	// we need a group to make our endpoints available under svcName.ENDPOINT
-	km.Group = km.svc.AddGroup(km.svcName)
+	km.Group = km.natsSvc.AddGroup(km.svcName)
 	if err != nil {
 		return err
 	}
@@ -78,9 +78,21 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 
 func (km *KMicro) Stop() {
 	// we're ignoring all errors
-	km.svc.Stop()
+	km.natsSvc.Stop()
 	km.nats.Close()
 	km.otelShutdown()
+}
+
+func (km *KMicro) GetLogger(ctx context.Context) *slog.Logger {
+	spanCtx := trace.SpanContextFromContext(ctx)
+	otelLogger := slog.Default()
+	if spanCtx.HasTraceID() {
+		otelLogger = otelLogger.With("traceId", spanCtx.TraceID().String())
+	}
+	if spanCtx.HasSpanID() {
+		otelLogger = otelLogger.With("spanId", spanCtx.SpanID().String())
+	}
+	return otelLogger
 }
 
 func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler ServiceHandler) {
