@@ -17,7 +17,7 @@ type KMicro struct {
 	micro.Group
 	svcName        string
 	svcVersion     string
-	con            *nats.Conn
+	nats           *nats.Conn
 	svc            micro.Service
 	logger         slog.Logger
 	otelShutdown   func() error
@@ -55,7 +55,7 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 	if err != nil {
 		return err
 	}
-	km.con = nc
+	km.nats = nc
 	km.svc, err = micro.AddService(nc, micro.Config{
 		Name:    km.svcName,
 		Version: km.svcVersion,
@@ -79,18 +79,17 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 func (km *KMicro) Stop() {
 	// we're ignoring all errors
 	km.svc.Stop()
-	km.con.Close()
+	km.nats.Close()
 	km.otelShutdown()
 }
 
-func (km *KMicro) AddEndpoint(subject string, handler ServiceHandler) {
+func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler ServiceHandler) {
 	// wrap everything to add tracing to all incoming requests
 	log.Printf("add endpoint to: %s", subject)
 	km.Group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
 		go func() {
 			propagator := propagation.TraceContext{}
-			ctx := km.GetContext(context.Background()) // could be improved with timeouts etc.
-			ctx = propagator.Extract(ctx, propagation.HeaderCarrier(req.Headers()))
+			ctx := propagator.Extract(ctx, propagation.HeaderCarrier(req.Headers()))
 			tracer := km.tracerProvider.Tracer("")
 			ctx, span := tracer.Start(ctx, "handle: "+subject)
 			defer span.End()
@@ -107,31 +106,17 @@ func (km *KMicro) AddEndpoint(subject string, handler ServiceHandler) {
 	}))
 }
 
-func (km *KMicro) GetContext(ctx context.Context) context.Context {
-	newCtx := context.WithValue(ctx, natsCon, km.con)
-	return context.WithValue(newCtx, traceProviderKey, km.tracerProvider)
-}
-
 // the given ctx should be returned by getContext from kmicro
-func DoCall(ctx context.Context, endpoint string, data []byte) ([]byte, error) {
-	nc, ok := ctx.Value(natsCon).(*nats.Conn)
-	if ok == false {
-		return nil, fmt.Errorf("nats connection not in context")
-	}
-	traceProvider, ok := ctx.Value(traceProviderKey).(*trace.TracerProvider)
-	if ok == false {
-		return nil, fmt.Errorf("service name not in context")
-	}
-
+func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byte, error) {
 	header := make(nats.Header)
 	// tracing
 	propagator := propagation.TraceContext{}
-	tracer := traceProvider.Tracer("")
+	tracer := km.tracerProvider.Tracer("")
 	ctx, span := tracer.Start(ctx, "call: "+endpoint)
 	propagator.Inject(ctx, propagation.HeaderCarrier(header))
 	defer span.End()
 	// -----
-	respMsg, err := nc.RequestMsgWithContext(ctx, &nats.Msg{
+	respMsg, err := km.nats.RequestMsgWithContext(ctx, &nats.Msg{
 		Subject: endpoint,
 		Header:  header,
 		Data:    data,

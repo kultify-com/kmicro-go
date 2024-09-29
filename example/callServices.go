@@ -18,7 +18,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	node.AddEndpoint("hello", func(ctx context.Context, data []byte) ([]byte, error) {
+	node.AddEndpoint(ctx, "hello", func(ctx context.Context, data []byte) ([]byte, error) {
 		return []byte{1, 2, 3}, nil
 	})
 
@@ -30,9 +30,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	node2.AddEndpoint("get_data", func(ctx context.Context, data []byte) ([]byte, error) {
+	node2.AddEndpoint(ctx, "get_data", func(ctx context.Context, data []byte) ([]byte, error) {
 		// return some json data
-		s1Result, err := kmicro.DoCall(ctx, "service1.hello", nil)
+		s1Result, err := node2.Call(ctx, "service1.hello", nil)
 		if err != nil {
 			return []byte{}, err
 		}
@@ -48,8 +48,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	ctx = caller.GetContext(ctx)
-	res, err := kmicro.DoCall(ctx, "service2.get_data", []byte{})
+	res, err := caller.Call(ctx, "service2.get_data", []byte{})
 	if err != nil {
 		log.Fatal(err)
 	}
