@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	kmicro "github.com/kultify-com/kmicro-go/pkg"
+	"github.com/kultify-com/kmicro-go"
 )
 
 func main() {
@@ -19,7 +19,7 @@ func main() {
 	}
 
 	node.AddEndpoint(ctx, "hello", func(ctx context.Context, data []byte) ([]byte, error) {
-		node.GetLogger(ctx).Info("handle hello")
+		node.GetLogger(ctx, "hello endpoint").Info("handle hello")
 		return []byte{1, 2, 3}, nil
 	})
 
@@ -33,7 +33,7 @@ func main() {
 
 	node2.AddEndpoint(ctx, "get_data", func(ctx context.Context, data []byte) ([]byte, error) {
 		// return some json data
-		node2.GetLogger(ctx).Info("handle get data")
+		node2.GetLogger(ctx, "get data endpoint").Info("handle get data")
 		s1Result, err := node2.Call(ctx, "service1.hello", nil)
 		if err != nil {
 			return []byte{}, err
@@ -50,9 +50,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	res, err := caller.Call(ctx, "service2.get_data", []byte{})
+	_, err := caller.Call(ctx, "service2.get_data", []byte{})
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("got result %v", res)
 }

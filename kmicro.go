@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"strconv"
 
@@ -12,18 +11,18 @@ import (
 	"github.com/nats-io/nats.go/micro"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
-	sdkTrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
 type KMicro struct {
 	micro.Group
-	svcName        string
-	svcVersion     string
-	nats           *nats.Conn
-	natsSvc        micro.Service
-	otelShutdown   func() error
-	tracerProvider *sdkTrace.TracerProvider
+	svcName      string
+	svcVersion   string
+	useOtel      bool
+	nats         *nats.Conn
+	natsSvc      micro.Service
+	otelShutdown func() error
+	tracer       trace.Tracer
 }
 
 const (
@@ -42,6 +41,16 @@ func NewKMicro(svcName string, svcVersion string) KMicro {
 	km := KMicro{
 		svcName:    svcName,
 		svcVersion: svcVersion,
+		useOtel:    true,
+	}
+	return km
+}
+
+func NewKMicroWithoutOtel(svcName string, svcVersion string) KMicro {
+	km := KMicro{
+		svcName:    svcName,
+		svcVersion: svcVersion,
+		useOtel:    false,
 	}
 	return km
 }
@@ -49,14 +58,22 @@ func NewKMicro(svcName string, svcVersion string) KMicro {
 // Connect to nats and setup the micro service
 // Use [AddEndpoints] to add endpoints to the service
 func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
-	shutdown, tracerProvider, err := setupOTelSDK(ctx, km.svcName)
-	if err != nil {
-		return fmt.Errorf("could not setup otel %w", err)
+	if km.useOtel {
+		shutdown, tracer, err := setupOTelSDK(ctx, km.svcName)
+		if err != nil {
+			return fmt.Errorf("could not setup otel %w", err)
+		}
+		km.otelShutdown = func() error {
+			return shutdown(ctx)
+		}
+		km.tracer = tracer
+	} else {
+		km.tracer = setupNoopOtel()
+		km.otelShutdown = func() error {
+			// do nothing
+			return nil
+		}
 	}
-	km.otelShutdown = func() error {
-		return shutdown(ctx)
-	}
-	km.tracerProvider = tracerProvider
 
 	nc, err := nats.Connect(natsUrl)
 	if err != nil {
@@ -90,9 +107,9 @@ func (km *KMicro) Stop() {
 	km.otelShutdown()
 }
 
-func (km *KMicro) GetLogger(ctx context.Context) *slog.Logger {
+func (km *KMicro) GetLogger(ctx context.Context, module string) *slog.Logger {
 	spanCtx := trace.SpanContextFromContext(ctx)
-	otelLogger := slog.Default()
+	otelLogger := slog.Default().With("module", module)
 	if spanCtx.HasTraceID() {
 		otelLogger = otelLogger.With("traceId", spanCtx.TraceID().String())
 	}
@@ -103,8 +120,6 @@ func (km *KMicro) GetLogger(ctx context.Context) *slog.Logger {
 }
 
 func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler ServiceHandler) {
-	// wrap everything to add tracing to all incoming requests
-	log.Printf("add endpoint to: %s", subject)
 	km.Group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
 		go func() {
 			propagator := propagation.TraceContext{}
@@ -116,8 +131,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 				callDepth = val
 			}
 			ctx = context.WithValue(ctx, callDepthCtxKey, callDepth)
-			tracer := km.tracerProvider.Tracer("")
-			ctx, span := tracer.Start(ctx, "handle: "+subject)
+			ctx, span := km.tracer.Start(ctx, "handle: "+subject)
 			defer span.End()
 
 			result, err := handler(ctx, req.Data())
@@ -125,6 +139,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
 				req.Error("500", err.Error(), nil)
+				return
 			}
 			req.Respond(result)
 			span.SetStatus(codes.Ok, "")
@@ -150,8 +165,7 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 
 	// setup tracing
 	propagator := propagation.TraceContext{}
-	tracer := km.tracerProvider.Tracer("")
-	ctx, span := tracer.Start(ctx, "call: "+endpoint)
+	ctx, span := km.tracer.Start(ctx, "call: "+endpoint)
 	propagator.Inject(ctx, propagation.HeaderCarrier(header))
 	defer span.End()
 	// -----
@@ -160,11 +174,19 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 		Header:  header,
 		Data:    data,
 	})
-	if err != nil {
+	if err != nil { // this error is from nats and not from a called service
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return nil, err
 	}
+	isResponseError := respMsg.Header.Get("Nats-Service-Error-Code")
+	if isResponseError != "" {
+		errorMsg := respMsg.Header.Get("Nats-Service-Error")
+		span.SetStatus(codes.Error, errorMsg)
+		span.RecordError(err)
+		return nil, fmt.Errorf("action error: %s", errorMsg)
+	}
+
 	span.SetStatus(codes.Ok, "")
 	return respMsg.Data, nil
 }

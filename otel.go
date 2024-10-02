@@ -8,13 +8,15 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
-	"go.opentelemetry.io/otel/sdk/trace"
+	sdkTrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	trace "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // setupOTelSDK bootstraps the OpenTelemetry pipeline.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
-func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Context) error, tracerProvider *trace.TracerProvider, err error) {
+func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Context) error, tracer trace.Tracer, err error) {
 	var shutdownFuncs []func(context.Context) error
 
 	shutdown = func(ctx context.Context) error {
@@ -38,9 +40,13 @@ func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Co
 		handleErr(err)
 		return
 	}
-	tracerProvider = trProvider
-	shutdownFuncs = append(shutdownFuncs, tracerProvider.Shutdown)
+	tracer = trProvider.Tracer("")
+	shutdownFuncs = append(shutdownFuncs, trProvider.Shutdown)
 	return
+}
+
+func setupNoopOtel() (tracerProvider trace.Tracer) {
+	return noop.NewTracerProvider().Tracer("")
 }
 
 func newPropagator() propagation.TextMapPropagator {
@@ -50,7 +56,7 @@ func newPropagator() propagation.TextMapPropagator {
 	)
 }
 
-func newTracerProvider(svcName string, ctx context.Context) (*trace.TracerProvider, error) {
+func newTracerProvider(svcName string, ctx context.Context) (*sdkTrace.TracerProvider, error) {
 	r, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
@@ -65,9 +71,9 @@ func newTracerProvider(svcName string, ctx context.Context) (*trace.TracerProvid
 		return nil, err
 	}
 
-	traceProvider := trace.NewTracerProvider(
-		trace.WithBatcher(traceExporter),
-		trace.WithResource(r),
+	traceProvider := sdkTrace.NewTracerProvider(
+		sdkTrace.WithBatcher(traceExporter),
+		sdkTrace.WithResource(r),
 	)
 	return traceProvider, nil
 }
