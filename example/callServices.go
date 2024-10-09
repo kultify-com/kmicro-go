@@ -50,7 +50,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, err := caller.Call(ctx, "service2.get_data", []byte{})
+	_, err = caller.Call(ctx, "service2.get_data", []byte{})
 	if err != nil {
 		log.Fatal(err)
 	}
