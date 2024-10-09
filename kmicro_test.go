@@ -23,7 +23,7 @@ func TestKMicro(t *testing.T) {
 		serviceName := "test_service"
 
 		// Initialize KMicro instance
-		km := NewKMicroWithoutOtel(serviceName, "0.0.1")
+		km := NewKMicroWithoutOtel(serviceName, "0.0.1", "test")
 
 		// Start KMicro instance
 		ctx := context.Background()
@@ -66,7 +66,7 @@ func TestKMicro(t *testing.T) {
 		serviceName := "test_service_error"
 
 		// Initialize KMicro instance
-		km := NewKMicroWithoutOtel(serviceName, "0.0.1")
+		km := NewKMicroWithoutOtel(serviceName, "0.0.1", "test")
 
 		// Start KMicro instance
 		ctx := context.TODO()

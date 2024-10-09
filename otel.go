@@ -16,7 +16,7 @@ import (
 
 // setupOTelSDK bootstraps the OpenTelemetry pipeline.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
-func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Context) error, tracer trace.Tracer, err error) {
+func setupOTelSDK(ctx context.Context, svcName string, namespace string) (shutdown func(context.Context) error, tracer trace.Tracer, err error) {
 	var shutdownFuncs []func(context.Context) error
 
 	shutdown = func(ctx context.Context) error {
@@ -35,7 +35,7 @@ func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Co
 	prop := newPropagator()
 	otel.SetTextMapPropagator(prop)
 
-	trProvider, err := newTracerProvider(svcName, ctx)
+	trProvider, err := newTracerProvider(ctx, svcName, namespace)
 	if err != nil {
 		handleErr(err)
 		return
@@ -56,12 +56,13 @@ func newPropagator() propagation.TextMapPropagator {
 	)
 }
 
-func newTracerProvider(svcName string, ctx context.Context) (*sdkTrace.TracerProvider, error) {
+func newTracerProvider(ctx context.Context, svcName string, namespace string) (*sdkTrace.TracerProvider, error) {
 	r, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
 			semconv.ServiceName(svcName),
+			semconv.ServiceNamespace(namespace),
 		),
 	)
 
