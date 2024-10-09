@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"strconv"
 
@@ -19,7 +18,6 @@ type KMicro struct {
 	micro.Group
 	svcName      string
 	svcVersion   string
-	namespace    string
 	useOtel      bool
 	nats         *nats.Conn
 	natsSvc      micro.Service
@@ -39,22 +37,20 @@ const headerCallDepthKey = "kmicro_callDepth"
 
 type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
-func NewKMicro(svcName string, svcVersion string, namespace string) KMicro {
+func NewKMicro(svcName string, svcVersion string) KMicro {
 	km := KMicro{
 		svcName:    svcName,
 		svcVersion: svcVersion,
 		useOtel:    true,
-		namespace:  namespace,
 	}
 	return km
 }
 
-func NewKMicroWithoutOtel(svcName string, svcVersion string, ns string) KMicro {
+func NewKMicroWithoutOtel(svcName string, svcVersion string) KMicro {
 	km := KMicro{
 		svcName:    svcName,
 		svcVersion: svcVersion,
 		useOtel:    false,
-		namespace:  ns,
 	}
 	return km
 }
@@ -63,7 +59,7 @@ func NewKMicroWithoutOtel(svcName string, svcVersion string, ns string) KMicro {
 // Use [AddEndpoints] to add endpoints to the service
 func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 	if km.useOtel {
-		shutdown, tracer, err := setupOTelSDK(ctx, km.svcName, km.namespace)
+		shutdown, tracer, err := setupOTelSDK(ctx, km.svcName)
 		if err != nil {
 			return fmt.Errorf("could not setup otel %w", err)
 		}
@@ -90,7 +86,7 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 		Version: km.svcVersion,
 		DoneHandler: func(srv micro.Service) {
 			info := srv.Info()
-			slog.Info("stopped service", "service", info.Name, "serviceId", info.ID)
+			slog.Info("stopped service", "serivce", info.Name, "serviceId", info.ID)
 		},
 		ErrorHandler: func(srv micro.Service, err *micro.NATSError) {
 			info := srv.Info()
@@ -101,7 +97,7 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 		return err
 	}
 	// we need a group to make our endpoints available under svcName.ENDPOINT
-	km.Group = km.natsSvc.AddGroup(km.namespace).AddGroup(km.svcName)
+	km.Group = km.natsSvc.AddGroup(km.svcName)
 	return nil
 }
 
@@ -114,7 +110,7 @@ func (km *KMicro) Stop() {
 
 func (km *KMicro) GetLogger(ctx context.Context, module string) *slog.Logger {
 	spanCtx := trace.SpanContextFromContext(ctx)
-	otelLogger := slog.Default().With("module", module).With("ns", km.namespace)
+	otelLogger := slog.Default().With("module", module)
 	if spanCtx.HasTraceID() {
 		otelLogger = otelLogger.With("traceId", spanCtx.TraceID().String())
 	}
@@ -155,6 +151,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 // the given ctx should be returned by getContext from kmicro
 func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byte, error) {
 	header := make(nats.Header)
+
 	// prevent infinte loops
 	callDepth := 0
 	callDepthStr, ok := ctx.Value(callDepthCtxKey).(string)
@@ -173,10 +170,8 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	propagator.Inject(ctx, propagation.HeaderCarrier(header))
 	defer span.End()
 	// -----
-	nsEndpoint := fmt.Sprintf("%s.%s", km.namespace, endpoint)
-	log.Printf("call nsendpoint %s for ns: %s and endpoint: %s", nsEndpoint, km.namespace, endpoint)
 	respMsg, err := km.nats.RequestMsgWithContext(ctx, &nats.Msg{
-		Subject: nsEndpoint,
+		Subject: endpoint,
 		Header:  header,
 		Data:    data,
 	})

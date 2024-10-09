@@ -11,7 +11,7 @@ func main() {
 	ctx := context.Background()
 
 	// service 1
-	node := kmicro.NewKMicro("service1", "1.0.0", "test")
+	node := kmicro.NewKMicro("service1", "1.0.0")
 	err := node.Start(ctx, "nats://localhost:4222")
 	defer node.Stop()
 	if err != nil {
@@ -24,7 +24,7 @@ func main() {
 	})
 
 	// service 2
-	node2 := kmicro.NewKMicro("service2", "1.0.0", "test")
+	node2 := kmicro.NewKMicro("service2", "1.0.0")
 	err = node2.Start(ctx, "nats://localhost:4222")
 	defer node2.Stop()
 	if err != nil {
@@ -44,7 +44,7 @@ func main() {
 	})
 
 	// caller
-	caller := kmicro.NewKMicro("caller", "1.0.0", "test")
+	caller := kmicro.NewKMicro("caller", "1.0.0")
 	err = caller.Start(ctx, "nats://localhost:4222")
 	defer caller.Stop()
 	if err != nil {
