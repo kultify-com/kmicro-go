@@ -74,11 +74,12 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 			return nil
 		}
 	}
-
+	slog.Info("connecting to nats...")
 	nc, err := nats.Connect(natsUrl)
 	if err != nil {
 		return err
 	}
+	slog.Info("connected to nats")
 	km.nats = nc
 	km.natsSvc, err = micro.AddService(nc, micro.Config{
 		Name:    km.svcName,
@@ -92,11 +93,11 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 			slog.Info("Service returned an error on subject", "service", info.Name, "subject", err.Subject, "error", err.Description)
 		},
 	})
-	// we need a group to make our endpoints available under svcName.ENDPOINT
-	km.Group = km.natsSvc.AddGroup(km.svcName)
 	if err != nil {
 		return err
 	}
+	// we need a group to make our endpoints available under svcName.ENDPOINT
+	km.Group = km.natsSvc.AddGroup(km.svcName)
 	return nil
 }
 
