@@ -23,10 +23,12 @@ type KMicro struct {
 	natsSvc      micro.Service
 	otelShutdown func() error
 	tracer       trace.Tracer
+	knownHeaders []string
 }
 
 const (
 	callDepthCtxKey = iota
+	CustomCtxHeaders
 )
 
 var (
@@ -37,20 +39,22 @@ const headerCallDepthKey = "kmicro_callDepth"
 
 type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
-func NewKMicro(svcName string, svcVersion string) KMicro {
+func NewKMicro(svcName string, svcVersion string, knownHeaders []string) KMicro {
 	km := KMicro{
-		svcName:    svcName,
-		svcVersion: svcVersion,
-		useOtel:    true,
+		svcName:      svcName,
+		svcVersion:   svcVersion,
+		useOtel:      true,
+		knownHeaders: knownHeaders,
 	}
 	return km
 }
 
-func NewKMicroWithoutOtel(svcName string, svcVersion string) KMicro {
+func NewKMicroWithoutOtel(svcName string, svcVersion string, knownHeaders []string) KMicro {
 	km := KMicro{
-		svcName:    svcName,
-		svcVersion: svcVersion,
-		useOtel:    false,
+		svcName:      svcName,
+		svcVersion:   svcVersion,
+		useOtel:      false,
+		knownHeaders: knownHeaders,
 	}
 	return km
 }
@@ -124,7 +128,18 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 	km.Group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
 		go func() {
 			propagator := propagation.TraceContext{}
-			ctx := propagator.Extract(ctx, propagation.HeaderCarrier(req.Headers()))
+			natsHeaders := req.Headers()
+			ctx := propagator.Extract(ctx, propagation.HeaderCarrier(natsHeaders))
+
+			// extract our custom known headers from the nats message
+			customHeaders := make(map[string]string, 0)
+			for _, k := range km.knownHeaders {
+				if val := natsHeaders.Get(k); val != "" {
+					customHeaders[k] = val
+				}
+			}
+			ctx = context.WithValue(ctx, CustomCtxHeaders, customHeaders)
+
 			callDepth := 0
 			callDepthStr := req.Headers().Get(headerCallDepthKey)
 			if callDepthStr != "" {
@@ -163,6 +178,14 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 		return nil, maxCallDepthErr
 	}
 	header.Set(headerCallDepthKey, strconv.Itoa(callDepth))
+	// add our custom headers
+	if currHeaders, ok := ctx.Value(CustomCtxHeaders).(map[string]string); ok {
+		for _, k := range km.knownHeaders {
+			if val, ok := currHeaders[k]; ok {
+				header.Set(k, val)
+			}
+		}
+	}
 
 	// setup tracing
 	propagator := propagation.TraceContext{}

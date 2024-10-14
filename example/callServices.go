@@ -9,9 +9,9 @@ import (
 
 func main() {
 	ctx := context.Background()
-
+	knownHeaders := []string{"X-AUTH"}
 	// service 1
-	node := kmicro.NewKMicro("service1", "1.0.0")
+	node := kmicro.NewKMicro("service1", "1.0.0", knownHeaders)
 	err := node.Start(ctx, "nats://localhost:4222")
 	defer node.Stop()
 	if err != nil {
@@ -24,7 +24,7 @@ func main() {
 	})
 
 	// service 2
-	node2 := kmicro.NewKMicro("service2", "1.0.0")
+	node2 := kmicro.NewKMicro("service2", "1.0.0", knownHeaders)
 	err = node2.Start(ctx, "nats://localhost:4222")
 	defer node2.Stop()
 	if err != nil {
@@ -44,7 +44,7 @@ func main() {
 	})
 
 	// caller
-	caller := kmicro.NewKMicro("caller", "1.0.0")
+	caller := kmicro.NewKMicro("caller", "1.0.0", knownHeaders)
 	err = caller.Start(ctx, "nats://localhost:4222")
 	defer caller.Stop()
 	if err != nil {

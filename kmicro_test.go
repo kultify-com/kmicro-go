@@ -23,7 +23,7 @@ func TestKMicro(t *testing.T) {
 		serviceName := "test_service"
 
 		// Initialize KMicro instance
-		km := NewKMicroWithoutOtel(serviceName, "0.0.1")
+		km := NewKMicroWithoutOtel(serviceName, "0.0.1", []string{"X-AUTH"})
 
 		// Start KMicro instance
 		ctx := context.Background()
@@ -36,6 +36,11 @@ func TestKMicro(t *testing.T) {
 		// Add endpoints
 		km.AddEndpoint(ctx, "action1", func(ctx context.Context, data []byte) ([]byte, error) {
 			json.Unmarshal(data, &action1ReceivedData)
+			customHeaders, ok := ctx.Value(CustomCtxHeaders).(map[string]string)
+			assert.True(t, ok, "it should set custom headers")
+			if customHeaders["X-AUTH"] != "abc" {
+				t.Error("should set customer header")
+			}
 			action2Result, err := km.Call(ctx, serviceName+".action2", []byte(`{"foo":"bar"}`))
 			if err != nil {
 				return nil, err
@@ -50,6 +55,10 @@ func TestKMicro(t *testing.T) {
 		})
 
 		// Call action1 and assert responses
+		customHeaders := map[string]string{
+			"X-AUTH": "abc",
+		}
+		ctx = context.WithValue(ctx, CustomCtxHeaders, customHeaders)
 		callResult, err := km.Call(ctx, serviceName+".action1", []byte(`{"hello":"world"}`))
 		require.NoError(t, err)
 
@@ -66,7 +75,7 @@ func TestKMicro(t *testing.T) {
 		serviceName := "test_service_error"
 
 		// Initialize KMicro instance
-		km := NewKMicroWithoutOtel(serviceName, "0.0.1")
+		km := NewKMicroWithoutOtel(serviceName, "0.0.1", []string{"X-AUTH"})
 
 		// Start KMicro instance
 		ctx := context.TODO()
