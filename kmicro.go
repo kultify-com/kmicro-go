@@ -154,6 +154,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
+				km.GetLogger(ctx, "kmicro").Error(fmt.Sprintf("Handler error (%s): %s", subject, err.Error()))
 				req.Error("500", err.Error(), nil)
 				return
 			}
@@ -201,13 +202,15 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	if err != nil { // this error is from nats and not from a called service
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
+		km.GetLogger(ctx, "kmicro").Error(fmt.Sprintf("nats error: %s", err.Error()))
 		return nil, err
 	}
-	isResponseError := respMsg.Header.Get("Nats-Service-Error-Code")
-	if isResponseError != "" {
+	isResponseErrorMsg := respMsg.Header.Get("Nats-Service-Error-Code")
+	if isResponseErrorMsg != "" {
 		errorMsg := respMsg.Header.Get("Nats-Service-Error")
 		span.SetStatus(codes.Error, errorMsg)
 		span.RecordError(err)
+		km.GetLogger(ctx, "kmicro").Error(fmt.Sprintf("action error: %s", isResponseErrorMsg))
 		return nil, fmt.Errorf("action error: %s", errorMsg)
 	}
 
