@@ -168,7 +168,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byte, error) {
 	header := make(nats.Header)
 
-	// prevent infinte loops
+	// prevent infinite loops
 	callDepth := 0
 	callDepthStr, ok := ctx.Value(callDepthCtxKey).(string)
 	if ok {
