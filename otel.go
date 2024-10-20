@@ -40,7 +40,7 @@ func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Co
 		handleErr(err)
 		return
 	}
-	tracer = trProvider.Tracer("")
+	tracer = trProvider.Tracer(svcName)
 	shutdownFuncs = append(shutdownFuncs, trProvider.Shutdown)
 	return
 }
