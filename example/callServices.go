@@ -19,7 +19,7 @@ func main() {
 	}
 
 	node.AddEndpoint(ctx, "hello", func(ctx context.Context, data []byte) ([]byte, error) {
-		node.GetLogger(ctx, "hello endpoint").Info("handle hello")
+		node.Logger("hello endpoint").Info("handle hello")
 		return []byte{1, 2, 3}, nil
 	})
 
@@ -33,7 +33,7 @@ func main() {
 
 	node2.AddEndpoint(ctx, "get_data", func(ctx context.Context, data []byte) ([]byte, error) {
 		// return some json data
-		node2.GetLogger(ctx, "get data endpoint").Info("handle get data")
+		node2.Logger("get data endpoint").Info("handle get data")
 		s1Result, err := node2.Call(ctx, "service1.hello", nil)
 		if err != nil {
 			return []byte{}, err

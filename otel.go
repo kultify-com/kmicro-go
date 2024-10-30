@@ -3,10 +3,14 @@ package kmicro
 import (
 	"context"
 	"errors"
+	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
+	sdkMetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdkTrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -16,7 +20,7 @@ import (
 
 // setupOTelSDK bootstraps the OpenTelemetry pipeline.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
-func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Context) error, tracer trace.Tracer, err error) {
+func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Context) error, tracer trace.Tracer, meter metric.Meter, err error) {
 	var shutdownFuncs []func(context.Context) error
 
 	shutdown = func(ctx context.Context) error {
@@ -35,13 +39,25 @@ func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Co
 	prop := newPropagator()
 	otel.SetTextMapPropagator(prop)
 
-	trProvider, err := newTracerProvider(svcName, ctx)
+	// traces
+	trProvider, err := newTracerProvider(ctx, svcName)
 	if err != nil {
 		handleErr(err)
 		return
 	}
 	tracer = trProvider.Tracer(svcName)
 	shutdownFuncs = append(shutdownFuncs, trProvider.Shutdown)
+
+	// metrics
+	meterProvider, err := newMeterProvider(ctx, svcName)
+	if err != nil {
+		handleErr(err)
+		return
+	}
+	meter = meterProvider.Meter(svcName)
+	shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
+	otel.SetMeterProvider(meterProvider)
+
 	return
 }
 
@@ -56,8 +72,8 @@ func newPropagator() propagation.TextMapPropagator {
 	)
 }
 
-func newTracerProvider(svcName string, ctx context.Context) (*sdkTrace.TracerProvider, error) {
-	r, err := resource.Merge(
+func newTracerProvider(ctx context.Context, svcName string) (*sdkTrace.TracerProvider, error) {
+	res, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
@@ -73,7 +89,29 @@ func newTracerProvider(svcName string, ctx context.Context) (*sdkTrace.TracerPro
 
 	traceProvider := sdkTrace.NewTracerProvider(
 		sdkTrace.WithBatcher(traceExporter),
-		sdkTrace.WithResource(r),
+		sdkTrace.WithResource(res),
 	)
 	return traceProvider, nil
+}
+
+func newMeterProvider(ctx context.Context, svcName string) (*sdkMetric.MeterProvider, error) {
+	res, err := resource.Merge(
+		resource.Default(),
+		resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName(svcName),
+		),
+	)
+	metricExporter, err := otlpmetricgrpc.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	meterProvider := sdkMetric.NewMeterProvider(
+		sdkMetric.WithResource(res),
+		sdkMetric.WithReader(sdkMetric.NewPeriodicReader(metricExporter,
+			// 1 minute is also the default
+			sdkMetric.WithInterval(1*time.Minute))),
+	)
+	return meterProvider, nil
 }
