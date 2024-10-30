@@ -102,7 +102,7 @@ func newMeterProvider(ctx context.Context, svcName string) (*sdkMetric.MeterProv
 			semconv.ServiceName(svcName),
 		),
 	)
-	metricExporter, err := otlpmetricgrpc.New(ctx)
+	metricExporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithInsecure(), otlpmetricgrpc.WithCompressor("gzip"))
 	if err != nil {
 		return nil, err
 	}
