@@ -9,13 +9,14 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/metric"
+	metricNoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
 	sdkMetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdkTrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	trace "go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/trace/noop"
+	traceNoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // setupOTelSDK bootstraps the OpenTelemetry pipeline.
@@ -61,8 +62,10 @@ func setupOTelSDK(ctx context.Context, svcName string) (shutdown func(context.Co
 	return
 }
 
-func setupNoopOtel() (tracerProvider trace.Tracer) {
-	return noop.NewTracerProvider().Tracer("")
+func setupNoopOtel() (tracer trace.Tracer, meter metric.Meter) {
+	tracer = traceNoop.NewTracerProvider().Tracer("")
+	meter = metricNoop.Meter{}
+	return
 }
 
 func newPropagator() propagation.TextMapPropagator {

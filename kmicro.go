@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -29,6 +30,11 @@ type KMicro struct {
 	meter        metric.Meter
 	knownHeaders []string
 	logger       *slog.Logger
+
+	// meters
+	endpointLatency           metric.Int64Histogram
+	endpointProcessedRequests metric.Int64Counter
+	endpointFailedRequests    metric.Int64Counter
 }
 
 const (
@@ -45,23 +51,35 @@ const headerCallDepthKey = "kmicro_callDepth"
 
 type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
-func NewKMicro(svcName string, svcVersion string, knownHeaders []string) KMicro {
-	km := KMicro{
-		svcName:      svcName,
-		svcVersion:   svcVersion,
-		useOtel:      true,
-		knownHeaders: knownHeaders,
-		logger:       newLogger(svcName, svcVersion),
-	}
-	return km
+type kmicroOptions struct {
+	setupOtel    bool
+	knownHeaders []string
 }
 
-func NewKMicroWithoutOtel(svcName string, svcVersion string, knownHeaders []string) KMicro {
+type option func(option *kmicroOptions)
+
+func WithOtel() func(*kmicroOptions) {
+	return func(o *kmicroOptions) {
+		o.setupOtel = true
+	}
+}
+
+func WithKnownHeaders(knownHeaders []string) func(*kmicroOptions) {
+	return func(o *kmicroOptions) {
+		o.knownHeaders = knownHeaders
+	}
+}
+
+func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
+	configuredOptions := kmicroOptions{}
+	for _, o := range options {
+		o(&configuredOptions)
+	}
 	km := KMicro{
 		svcName:      svcName,
 		svcVersion:   svcVersion,
-		useOtel:      false,
-		knownHeaders: knownHeaders,
+		useOtel:      configuredOptions.setupOtel,
+		knownHeaders: configuredOptions.knownHeaders,
 		logger:       newLogger(svcName, svcVersion),
 	}
 	return km
@@ -81,7 +99,7 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 		km.tracer = tracer
 		km.meter = meter
 	} else {
-		km.tracer = setupNoopOtel()
+		km.tracer, km.meter = setupNoopOtel()
 		km.otelShutdown = func() error {
 			// do nothing
 			return nil
@@ -111,6 +129,20 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 	}
 	// we need a group to make our endpoints available under svcName.ENDPOINT
 	km.Group = km.natsSvc.AddGroup(km.svcName)
+
+	// setup meters
+	km.endpointLatency, err = km.meter.Int64Histogram("endpoint.latency", metric.WithUnit("ms"))
+	if err != nil {
+		km.logger.Error(fmt.Sprintf("could not create endpoint.latency histogram %s", err.Error()))
+	}
+	km.endpointProcessedRequests, err = km.meter.Int64Counter("endpoint.requests.success", metric.WithDescription("The number of successfull handled requests"))
+	if err != nil {
+		km.logger.Error(fmt.Sprintf("could not create endpoint.requests.success histogram %s", err.Error()))
+	}
+	km.endpointFailedRequests, err = km.meter.Int64Counter("endpoint.requests.error", metric.WithDescription("The number of failed requests"))
+	if err != nil {
+		km.logger.Error(fmt.Sprintf("could not create endpoint.requests.success histogram %s", err.Error()))
+	}
 	return nil
 }
 
@@ -126,8 +158,12 @@ func (km *KMicro) Logger(module string) *slog.Logger {
 }
 
 func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler ServiceHandler) {
+	ctx = AppendSlogCtx(ctx, slog.String("endpoint", subject))
+	metricAttrs := metric.WithAttributes(
+		semconv.RPCMethod(subject),
+	)
+
 	km.Group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
-		ctx := AppendSlogCtx(ctx, slog.String("endpoint", subject))
 		go func() {
 			start := time.Now()
 			propagator := propagation.TraceContext{}
@@ -150,20 +186,24 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 				callDepth = val
 			}
 			ctx = context.WithValue(ctx, callDepthCtxKey, callDepth)
-			ctx, span := km.tracer.Start(ctx, "handle: "+subject)
+			ctx, span := km.tracer.Start(ctx, fmt.Sprintf("handle: %s", subject))
 			defer span.End()
 
 			km.logger.InfoContext(ctx, "handle request")
 			result, err := handler(ctx, req.Data())
+			duration := time.Since(start)
+			km.endpointLatency.Record(ctx, duration.Milliseconds(), metricAttrs)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
 				km.logger.ErrorContext(ctx, fmt.Sprintf("handler error (%s): %s", subject, err.Error()))
 				req.Error("500", err.Error(), nil)
+				km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
 				return
 			}
 			req.Respond(result)
 			span.SetStatus(codes.Ok, "")
+			km.endpointProcessedRequests.Add(ctx, 1, metricAttrs)
 			km.logger.InfoContext(ctx, "handled request", slog.String("duration", time.Since(start).String()))
 		}()
 	}))
