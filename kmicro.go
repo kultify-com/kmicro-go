@@ -11,6 +11,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
@@ -20,18 +21,18 @@ import (
 
 type KMicro struct {
 	micro.Group
-	svcName      string
-	svcVersion   string
-	useOtel      bool
-	nats         *nats.Conn
-	natsSvc      micro.Service
-	otelShutdown func() error
-	tracer       trace.Tracer
-	meter        metric.Meter
+	svcName    string
+	svcVersion string
+
+	nats    *nats.Conn
+	natsSvc micro.Service
+
 	knownHeaders []string
 	logger       *slog.Logger
 
-	// meters
+	// tracing
+	tracer                    trace.Tracer
+	meter                     metric.Meter
 	endpointLatency           metric.Int64Histogram
 	endpointProcessedRequests metric.Int64Counter
 	endpointFailedRequests    metric.Int64Counter
@@ -52,17 +53,10 @@ const headerCallDepthKey = "kmicro_callDepth"
 type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
 type kmicroOptions struct {
-	setupOtel    bool
 	knownHeaders []string
 }
 
 type option func(option *kmicroOptions)
-
-func WithOtel() func(*kmicroOptions) {
-	return func(o *kmicroOptions) {
-		o.setupOtel = true
-	}
-}
 
 func WithKnownHeaders(knownHeaders []string) func(*kmicroOptions) {
 	return func(o *kmicroOptions) {
@@ -78,7 +72,6 @@ func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
 	km := KMicro{
 		svcName:      svcName,
 		svcVersion:   svcVersion,
-		useOtel:      configuredOptions.setupOtel,
 		knownHeaders: configuredOptions.knownHeaders,
 		logger:       newLogger(svcName, svcVersion),
 	}
@@ -88,23 +81,12 @@ func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
 // Connect to nats and setup the micro service
 // Use [AddEndpoints] to add endpoints to the service
 func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
-	if km.useOtel {
-		shutdown, tracer, meter, err := setupOTelSDK(ctx, km.svcName)
-		if err != nil {
-			return fmt.Errorf("could not setup otel %w", err)
-		}
-		km.otelShutdown = func() error {
-			return shutdown(ctx)
-		}
-		km.tracer = tracer
-		km.meter = meter
-	} else {
-		km.tracer, km.meter = setupNoopOtel()
-		km.otelShutdown = func() error {
-			// do nothing
-			return nil
-		}
-	}
+	km.tracer = otel.GetTracerProvider().Tracer("kmicro", trace.WithInstrumentationAttributes(
+		semconv.RPCService(km.svcName),
+	))
+	km.meter = otel.GetMeterProvider().Meter("kmicro", metric.WithInstrumentationAttributes(
+		semconv.RPCService(km.svcName),
+	))
 	km.logger.Info("connecting to nats...")
 	nc, err := nats.Connect(natsUrl)
 	if err != nil {
@@ -131,15 +113,15 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 	km.Group = km.natsSvc.AddGroup(km.svcName)
 
 	// setup meters
-	km.endpointLatency, err = km.meter.Int64Histogram("endpoint.latency", metric.WithUnit("ms"))
+	km.endpointLatency, err = km.meter.Int64Histogram("kmicro.endpoint.latency", metric.WithUnit("ms"))
 	if err != nil {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.latency histogram %s", err.Error()))
 	}
-	km.endpointProcessedRequests, err = km.meter.Int64Counter("endpoint.requests.success", metric.WithDescription("The number of successfull handled requests"))
+	km.endpointProcessedRequests, err = km.meter.Int64Counter("kmicro.endpoint.requests.success", metric.WithDescription("The number of successfull handled requests"))
 	if err != nil {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.requests.success histogram %s", err.Error()))
 	}
-	km.endpointFailedRequests, err = km.meter.Int64Counter("endpoint.requests.error", metric.WithDescription("The number of failed requests"))
+	km.endpointFailedRequests, err = km.meter.Int64Counter("kmicro.endpoint.requests.error", metric.WithDescription("The number of failed requests"))
 	if err != nil {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.requests.success histogram %s", err.Error()))
 	}
@@ -150,7 +132,6 @@ func (km *KMicro) Stop() {
 	// we're ignoring all errors
 	km.natsSvc.Stop()
 	km.nats.Close()
-	km.otelShutdown()
 }
 
 func (km *KMicro) Logger(module string) *slog.Logger {
