@@ -82,12 +82,10 @@ func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
 // Use [AddEndpoints] to add endpoints to the service
 func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 	km.tracer = otel.GetTracerProvider().Tracer("kmicro", trace.WithInstrumentationAttributes(
-		semconv.ServiceName(km.svcName),
-		semconv.ServiceVersion(km.svcVersion),
+		semconv.RPCService(km.svcName),
 	))
 	km.meter = otel.GetMeterProvider().Meter("kmicro", metric.WithInstrumentationAttributes(
-		semconv.ServiceName(km.svcName),
-		semconv.ServiceVersion(km.svcVersion),
+		semconv.RPCService(km.svcName),
 	))
 	km.logger.Info("connecting to nats...")
 	nc, err := nats.Connect(natsUrl)
@@ -115,15 +113,15 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 	km.Group = km.natsSvc.AddGroup(km.svcName)
 
 	// setup meters
-	km.endpointLatency, err = km.meter.Int64Histogram("endpoint.latency", metric.WithUnit("ms"))
+	km.endpointLatency, err = km.meter.Int64Histogram("kmicro.endpoint.latency", metric.WithUnit("ms"))
 	if err != nil {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.latency histogram %s", err.Error()))
 	}
-	km.endpointProcessedRequests, err = km.meter.Int64Counter("endpoint.requests.success", metric.WithDescription("The number of successfull handled requests"))
+	km.endpointProcessedRequests, err = km.meter.Int64Counter("kmicro.endpoint.requests.success", metric.WithDescription("The number of successfull handled requests"))
 	if err != nil {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.requests.success histogram %s", err.Error()))
 	}
-	km.endpointFailedRequests, err = km.meter.Int64Counter("endpoint.requests.error", metric.WithDescription("The number of failed requests"))
+	km.endpointFailedRequests, err = km.meter.Int64Counter("kmicro.endpoint.requests.error", metric.WithDescription("The number of failed requests"))
 	if err != nil {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.requests.success histogram %s", err.Error()))
 	}
