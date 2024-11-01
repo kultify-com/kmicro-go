@@ -279,10 +279,10 @@ func (h KMicroContextHandler) Handle(ctx context.Context, r slog.Record) error {
 	// extract and add possible otel information from context
 	spanCtx := trace.SpanContextFromContext(ctx)
 	if spanCtx.HasTraceID() {
-		r.AddAttrs(slog.String("traceId", spanCtx.TraceID().String()))
+		r.AddAttrs(slog.String("trace_id", spanCtx.TraceID().String()))
 	}
 	if spanCtx.HasSpanID() {
-		r.AddAttrs(slog.String("spanId", spanCtx.SpanID().String()))
+		r.AddAttrs(slog.String("span_id", spanCtx.SpanID().String()))
 	}
 
 	return h.Handler.Handle(ctx, r)
