@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -82,10 +83,10 @@ func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
 // Use [AddEndpoints] to add endpoints to the service
 func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 	km.tracer = otel.GetTracerProvider().Tracer("kmicro", trace.WithInstrumentationAttributes(
-		semconv.RPCService(km.svcName),
+		semconv.ServiceName(km.svcName),
 	))
 	km.meter = otel.GetMeterProvider().Meter("kmicro", metric.WithInstrumentationAttributes(
-		semconv.RPCService(km.svcName),
+		semconv.ServiceName(km.svcName),
 	))
 	km.logger.Info("connecting to nats...")
 	nc, err := nats.Connect(natsUrl)
@@ -128,16 +129,19 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 	return nil
 }
 
+// Stop is used for a clean node shutdown
 func (km *KMicro) Stop() {
 	// we're ignoring all errors
 	km.natsSvc.Stop()
 	km.nats.Close()
 }
 
+// Logger returns a slog.Logger with a module label
 func (km *KMicro) Logger(module string) *slog.Logger {
 	return km.logger.With(slog.String("module", module))
 }
 
+// AddEndpoint registers a new endpoint to handle incoming requests
 func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler ServiceHandler) {
 	ctx = AppendSlogCtx(ctx, slog.String("endpoint", subject))
 	metricAttrs := metric.WithAttributes(
@@ -216,7 +220,10 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 
 	// setup tracing
 	propagator := propagation.TraceContext{}
-	ctx, span := km.tracer.Start(ctx, fmt.Sprintf("call: %s", endpoint))
+	parts := strings.Split(endpoint, ".")
+	rpcService := parts[0]
+	rpcAction := parts[1]
+	ctx, span := km.tracer.Start(ctx, fmt.Sprintf("call: %s", endpoint), trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(semconv.RPCService(rpcService), semconv.RPCMethod(rpcAction)))
 	ctx = AppendSlogCtx(ctx, slog.String("action", endpoint))
 	propagator.Inject(ctx, propagation.HeaderCarrier(header))
 	defer span.End()
@@ -288,6 +295,7 @@ func (h KMicroContextHandler) Handle(ctx context.Context, r slog.Record) error {
 	return h.Handler.Handle(ctx, r)
 }
 
+// AppendSlogCtx returns a context with the given attr
 func AppendSlogCtx(ctx context.Context, attr slog.Attr) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
