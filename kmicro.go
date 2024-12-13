@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -223,8 +222,11 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	parts := strings.Split(endpoint, ".")
 	rpcService := parts[0]
 	rpcAction := parts[1]
-	ctx, span := km.tracer.Start(ctx, fmt.Sprintf("call: %s", endpoint), trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(semconv.RPCService(rpcService), semconv.RPCMethod(rpcAction)))
-	ctx = AppendSlogCtx(ctx, slog.String("action", endpoint))
+	ctx, span := km.tracer.Start(ctx, fmt.Sprintf("call: %s", endpoint),
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(semconv.RPCService(rpcService),
+			semconv.RPCMethod(rpcAction)),
+	)
 	propagator.Inject(ctx, propagation.HeaderCarrier(header))
 	defer span.End()
 	// -----
@@ -253,60 +255,18 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	return respMsg.Data, nil
 }
 
-func newLogger(svcName, svcVersion string) *slog.Logger {
-	initAttr := []slog.Attr{slog.Group("service",
-		slog.String("name", svcName),
-		slog.String("version", svcVersion),
-	)}
-	h := &KMicroContextHandler{
-		initAttr: initAttr,
-		Handler: slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			AddSource: true,
-		},
-		)}
-	return slog.New(h)
-}
-
-type KMicroContextHandler struct {
-	slog.Handler
-	initAttr []slog.Attr
-}
-
-func (h KMicroContextHandler) Handle(ctx context.Context, r slog.Record) error {
-	// add predefined attrs
-	for _, v := range h.initAttr {
-		r.AddAttrs(v)
-	}
-	// dynamic attrs
-	if attrs, ok := ctx.Value(slogFields).([]slog.Attr); ok {
-		for _, v := range attrs {
-			r.AddAttrs(v)
-		}
-	}
-	// extract and add possible otel information from context
-	spanCtx := trace.SpanContextFromContext(ctx)
-	if spanCtx.HasTraceID() {
-		r.AddAttrs(slog.String("trace_id", spanCtx.TraceID().String()))
-	}
-	if spanCtx.HasSpanID() {
-		r.AddAttrs(slog.String("span_id", spanCtx.SpanID().String()))
-	}
-
-	return h.Handler.Handle(ctx, r)
-}
-
 // AppendSlogCtx returns a context with the given attr
-func AppendSlogCtx(ctx context.Context, attr slog.Attr) context.Context {
+func AppendSlogCtx(ctx context.Context, attrs ...slog.Attr) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	if v, ok := ctx.Value(slogFields).([]slog.Attr); ok {
-		v = append(v, attr)
+		v = append(v, attrs...)
 		return context.WithValue(ctx, slogFields, v)
 	}
 
 	v := []slog.Attr{}
-	v = append(v, attr)
+	v = append(v, attrs...)
 	return context.WithValue(ctx, slogFields, v)
 }

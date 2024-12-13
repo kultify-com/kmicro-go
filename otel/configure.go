@@ -49,6 +49,7 @@ func ConfigureOpenTelemetry(ctx context.Context, svcName string) (shutdown func(
 	}
 	tracer = trProvider.Tracer(svcName)
 	shutdownFuncs = append(shutdownFuncs, trProvider.Shutdown)
+	otel.SetTracerProvider(trProvider)
 
 	// metrics
 	meterProvider, err := newMeterProvider(ctx, svcName)
