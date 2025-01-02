@@ -38,11 +38,15 @@ type KMicro struct {
 	endpointFailedRequests    metric.Int64Counter
 }
 
+type CtxKey int
+
 const (
-	callDepthCtxKey = iota
+	callDepthCtxKey CtxKey = iota
 	CustomCtxHeaders
 	slogFields
 )
+
+type Headers map[string]string
 
 var (
 	maxCallDepthErr = errors.New("max call depth reached")
@@ -155,13 +159,13 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 			ctx = propagator.Extract(ctx, propagation.HeaderCarrier(natsHeaders))
 
 			// extract our custom known headers from the nats message
-			customHeaders := make(map[string]string, 0)
+			customHeaders := make(Headers, len(km.knownHeaders))
 			for _, k := range km.knownHeaders {
 				if val := natsHeaders.Get(k); val != "" {
 					customHeaders[k] = val
 				}
 			}
-			ctx = context.WithValue(ctx, CustomCtxHeaders, customHeaders)
+			ctx = ContextWithCustomHeaders(ctx, customHeaders)
 
 			callDepth := 0
 			callDepthStr := req.Headers().Get(headerCallDepthKey)
@@ -209,7 +213,7 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	}
 	header.Set(headerCallDepthKey, strconv.Itoa(callDepth))
 	// add our custom headers
-	if currHeaders, ok := ctx.Value(CustomCtxHeaders).(map[string]string); ok {
+	if currHeaders, ok := ctx.Value(CustomCtxHeaders).(Headers); ok {
 		for _, k := range km.knownHeaders {
 			if val, ok := currHeaders[k]; ok {
 				header.Set(k, val)
@@ -269,4 +273,13 @@ func AppendSlogCtx(ctx context.Context, attrs ...slog.Attr) context.Context {
 	v := []slog.Attr{}
 	v = append(v, attrs...)
 	return context.WithValue(ctx, slogFields, v)
+}
+
+func ContextWithCustomHeaders(ctx context.Context, headers Headers) context.Context {
+	return context.WithValue(ctx, CustomCtxHeaders, headers)
+}
+
+func CustomHeadersFromContext(ctx context.Context) (Headers, bool) {
+	headers, ok := ctx.Value(CustomCtxHeaders).(Headers)
+	return headers, ok
 }

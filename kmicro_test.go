@@ -36,7 +36,7 @@ func TestKMicro(t *testing.T) {
 		// Add endpoints
 		km.AddEndpoint(ctx, "action1", func(ctx context.Context, data []byte) ([]byte, error) {
 			json.Unmarshal(data, &action1ReceivedData)
-			customHeaders, ok := ctx.Value(CustomCtxHeaders).(map[string]string)
+			customHeaders, ok := CustomHeadersFromContext(ctx)
 			assert.True(t, ok, "it should set custom headers")
 			if customHeaders["X-AUTH"] != "abc" {
 				t.Error("should set customer header")
@@ -55,10 +55,10 @@ func TestKMicro(t *testing.T) {
 		})
 
 		// Call action1 and assert responses
-		customHeaders := map[string]string{
+		customHeaders := Headers{
 			"X-AUTH": "abc",
 		}
-		ctx = context.WithValue(ctx, CustomCtxHeaders, customHeaders)
+		ctx = ContextWithCustomHeaders(ctx, customHeaders)
 		callResult, err := km.Call(ctx, serviceName+".action1", []byte(`{"hello":"world"}`))
 		require.NoError(t, err)
 
