@@ -24,7 +24,7 @@ type KMicro struct {
 	svcName    string
 	svcVersion string
 
-	nats    *nats.Conn
+	Nats    *nats.Conn
 	natsSvc micro.Service
 
 	knownHeaders []string
@@ -97,7 +97,7 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 		return err
 	}
 	km.logger.Info("connected to nats")
-	km.nats = nc
+	km.Nats = nc
 	km.natsSvc, err = micro.AddService(nc, micro.Config{
 		Name:    km.svcName,
 		Version: km.svcVersion,
@@ -136,7 +136,7 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 func (km *KMicro) Stop() {
 	// we're ignoring all errors
 	km.natsSvc.Stop()
-	km.nats.Close()
+	km.Nats.Close()
 }
 
 // Logger returns a slog.Logger with a module label
@@ -235,7 +235,7 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	defer span.End()
 	// -----
 	km.logger.InfoContext(ctx, "call")
-	respMsg, err := km.nats.RequestMsgWithContext(ctx, &nats.Msg{
+	respMsg, err := km.Nats.RequestMsgWithContext(ctx, &nats.Msg{
 		Subject: endpoint,
 		Header:  header,
 		Data:    data,
