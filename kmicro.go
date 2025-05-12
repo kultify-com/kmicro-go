@@ -134,9 +134,15 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 
 // Stop is used for a clean node shutdown
 func (km *KMicro) Stop() {
-	// we're ignoring all errors
-	km.natsSvc.Stop()
-	km.Nats.Close()
+	if km.natsSvc != nil {
+		err := km.natsSvc.Stop()
+		if err != nil {
+			km.logger.Error(fmt.Sprintf("could not stop nats service %s", err.Error()))
+		}
+	}
+	if km.Nats != nil {
+		km.Nats.Close()
+	}
 }
 
 // Logger returns a slog.Logger with a module label
