@@ -3,23 +3,16 @@ package kmicro
 import (
 	"context"
 	"log/slog"
-	"os"
 
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newLogger(svcName, svcVersion string) *slog.Logger {
+func setupLogger(logger *slog.Logger, svcName, svcVersion string) *slog.Logger {
 	initAttr := []slog.Attr{slog.Group("service",
 		slog.String("name", svcName),
 		slog.String("version", svcVersion),
 	)}
-	h := &KMicroContextHandler{
-		initAttr: initAttr,
-		Handler: slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			AddSource: true,
-		},
-		)}
-	return slog.New(h)
+	return logger.With(initAttr)
 }
 
 type KMicroContextHandler struct {

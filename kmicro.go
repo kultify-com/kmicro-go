@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +59,7 @@ type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
 type kmicroOptions struct {
 	knownHeaders []string
+	logger       *slog.Logger
 }
 
 type option func(option *kmicroOptions)
@@ -68,16 +70,28 @@ func WithKnownHeaders(knownHeaders []string) func(*kmicroOptions) {
 	}
 }
 
+func WithLogger(logger *slog.Logger) func(*kmicroOptions) {
+	return func(o *kmicroOptions) {
+		o.logger = logger
+	}
+}
+
 func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
 	configuredOptions := kmicroOptions{}
 	for _, o := range options {
 		o(&configuredOptions)
 	}
+	usedLogger := configuredOptions.logger
+	if usedLogger == nil {
+		usedLogger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			AddSource: true,
+		}))
+	}
 	km := KMicro{
 		svcName:      svcName,
 		svcVersion:   svcVersion,
 		knownHeaders: configuredOptions.knownHeaders,
-		logger:       newLogger(svcName, svcVersion),
+		logger:       setupLogger(usedLogger, svcName, svcVersion),
 	}
 	return km
 }
