@@ -8,11 +8,10 @@ import (
 )
 
 func setupLogger(logger *slog.Logger, svcName, svcVersion string) *slog.Logger {
-	initAttr := []slog.Attr{slog.Group("service",
+	return logger.With(slog.Group("service",
 		slog.String("name", svcName),
 		slog.String("version", svcVersion),
-	)}
-	return logger.With(initAttr)
+	))
 }
 
 type KMicroContextHandler struct {
