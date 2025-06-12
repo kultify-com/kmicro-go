@@ -8,10 +8,15 @@ import (
 )
 
 func setupLogger(logger *slog.Logger, svcName, svcVersion string) *slog.Logger {
-	return logger.WithGroup("service").With(
+	initAttr := []slog.Attr{slog.Group("service",
 		slog.String("name", svcName),
 		slog.String("version", svcVersion),
-	)
+	)}
+	h := &KMicroContextHandler{
+		initAttr: initAttr,
+		Handler:  logger.Handler(),
+	}
+	return slog.New(h)
 }
 
 type KMicroContextHandler struct {
