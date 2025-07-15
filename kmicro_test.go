@@ -35,7 +35,6 @@ func setup(ctx context.Context) {
 	if err != nil {
 		log.Fatalf("failed to get connection string: %s", err)
 	}
-	// Create authenticated connection URL
 	natsURL = uri
 }
 
@@ -48,21 +47,14 @@ func teardown() {
 func TestKMicro(t *testing.T) {
 
 	t.Run("should communicate", func(t *testing.T) {
-		// ServiceName
 		serviceName := "test_service"
-
-		// Initialize KMicro instance
 		km := NewKMicro(serviceName, "0.0.1", WithKnownHeaders([]string{"X-AUTH"}))
-
-		// Start KMicro instance
 		ctx := context.Background()
 		require.NoError(t, km.Start(ctx, natsURL))
 		defer km.Stop()
 
-		// Define variables to capture received data
 		var action1ReceivedData, action2ReceivedData map[string]interface{}
 
-		// Add endpoints
 		km.AddEndpoint(ctx, "action1", func(ctx context.Context, data []byte) ([]byte, error) {
 			json.Unmarshal(data, &action1ReceivedData)
 			customHeaders, ok := CustomHeadersFromContext(ctx)
@@ -83,7 +75,6 @@ func TestKMicro(t *testing.T) {
 			return response, nil
 		})
 
-		// Call action1 and assert responses
 		customHeaders := Headers{
 			"X-AUTH": "abc",
 		}
@@ -100,18 +91,14 @@ func TestKMicro(t *testing.T) {
 	})
 
 	t.Run("should return correct errors", func(t *testing.T) {
-		// ServiceName
 		serviceName := "test_service_error"
 
-		// Initialize KMicro instance
 		km := NewKMicro(serviceName, "0.0.1", WithKnownHeaders([]string{"X-AUTH"}))
 
-		// Start KMicro instance
 		ctx := context.TODO()
 		require.NoError(t, km.Start(ctx, natsURL))
 		defer km.Stop()
 
-		// Add endpoints
 		km.AddEndpoint(ctx, "action1", func(ctx context.Context, data []byte) ([]byte, error) {
 			val, err := km.Call(ctx, serviceName+".action2", []byte(`{"foo":"bar"}`))
 			log.Printf("got from action2: val %v, err %v", val, err)
@@ -123,9 +110,8 @@ func TestKMicro(t *testing.T) {
 			return nil, errors.New("some error")
 		})
 
-		// Call action1 and expect error
 		_, err := km.Call(ctx, serviceName+".action1", []byte(`{"hello":"world"}`))
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "some error") // or more specific error checking
+		assert.Contains(t, err.Error(), "some error")
 	})
 }
