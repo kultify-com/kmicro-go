@@ -10,13 +10,42 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	testContainerNats "github.com/testcontainers/testcontainers-go/modules/nats"
 )
 
-func TestKMicro(t *testing.T) {
-	natsURL := os.Getenv("NATS")
-	if natsURL == "" {
-		natsURL = "nats://localhost:4222"
+func TestMain(m *testing.M) {
+	ctx := context.Background()
+	setup(ctx)
+	code := m.Run()
+	teardown()
+	os.Exit(code)
+}
+
+var natsContainer *testContainerNats.NATSContainer
+var natsURL string
+
+func setup(ctx context.Context) {
+	var err error
+	natsContainer, err = testContainerNats.Run(ctx, "nats:2.11")
+	if err != nil {
+		log.Fatalf("failed to start NATS container: %s", err)
 	}
+	uri, err := natsContainer.ConnectionString(ctx)
+	if err != nil {
+		log.Fatalf("failed to get connection string: %s", err)
+	}
+	// Create authenticated connection URL
+	natsURL = uri
+}
+
+func teardown() {
+	if err := testcontainers.TerminateContainer(natsContainer); err != nil {
+		log.Printf("failed to terminate container: %s", err)
+	}
+}
+
+func TestKMicro(t *testing.T) {
 
 	t.Run("should communicate", func(t *testing.T) {
 		// ServiceName
