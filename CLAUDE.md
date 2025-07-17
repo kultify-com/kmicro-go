@@ -12,6 +12,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `make tidy` - Update and clean Go module dependencies
 - `go mod tidy` - Update dependencies directly
 
+## Code Style
+- **No Comments**: Do not add function or code comments unless absolutely necessary for complex logic
+
 ## Code Architecture
 
 ### Core Framework (kmicro.go)

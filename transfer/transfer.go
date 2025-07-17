@@ -3,10 +3,13 @@ package transfer
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	testContainerNats "github.com/testcontainers/testcontainers-go/modules/nats"
 )
 
 var (
@@ -30,6 +33,10 @@ type TransferService struct {
 	enableTracking bool
 	tracker        []TrackLog
 	trackerMutex   sync.Mutex
+
+	// nullable
+	natsContainer *testContainerNats.NATSContainer
+	natsConn      *nats.Conn
 }
 
 type TransferServiceInterface interface {
@@ -38,10 +45,16 @@ type TransferServiceInterface interface {
 	Write(ctx context.Context, ref TransferReference, data []byte) error
 	Read(ctx context.Context, ref TransferReference) ([]byte, error)
 	Delete(ctx context.Context, ref TransferReference) error
+	TearDown() error
 }
 
 type options struct {
 	enableTracking bool
+
+	// nullable settings
+
+	natsContainer *testContainerNats.NATSContainer
+	natsConn      *nats.Conn
 }
 
 // WithEnableTracking is an option to enable the tracking of all transfer operations.
@@ -49,6 +62,45 @@ func WithEnableTracking() func(*options) {
 	return func(opts *options) {
 		opts.enableTracking = true
 	}
+}
+
+func withNATSContainer(nc *testContainerNats.NATSContainer) func(*options) {
+	return func(opts *options) {
+		opts.natsContainer = nc
+	}
+}
+
+func withNatsConn(conn *nats.Conn) func(*options) {
+	return func(opts *options) {
+		opts.natsConn = conn
+	}
+}
+
+// NewNullTransferService creates a TransferService with a NATS container for testing purposes.
+func NewNullTransferService(opts ...func(*options)) *TransferService {
+	ctx := context.Background()
+	natsContainer, err := testContainerNats.Run(ctx, "nats:2.11")
+	if err != nil {
+		log.Fatalf("failed to start NATS container: %s", err)
+	}
+	uri, err := natsContainer.ConnectionString(ctx)
+	if err != nil {
+		log.Fatalf("failed to get connection string: %s", err)
+
+	}
+	nc, err := nats.Connect(uri, nats.UserInfo(natsContainer.User, natsContainer.Password))
+	if err != nil {
+		log.Fatalf("failed to connect to NATS: %s", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		log.Fatalf("failed to get JetStream context: %s", err)
+	}
+	return NewTransferService(
+		js,
+		withNATSContainer(natsContainer),
+		withNatsConn(nc),
+	)
 }
 
 func NewTransferService(js jetstream.JetStream, opts ...func(*options)) *TransferService {
@@ -147,5 +199,17 @@ func (s *TransferService) Delete(ctx context.Context, ref TransferReference) err
 		return fmt.Errorf("failed to delete data: %w", err)
 	}
 	s.SafeAppendTrackLog("delete", ref, nil)
+	return nil
+}
+
+func (s *TransferService) TearDown() error {
+	if s.natsConn != nil {
+		s.natsConn.Close()
+	}
+	if s.natsContainer != nil {
+		if err := s.natsContainer.Stop(context.Background(), nil); err != nil {
+			return fmt.Errorf("failed to terminate NATS container: %w", err)
+		}
+	}
 	return nil
 }
