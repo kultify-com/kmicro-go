@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -162,6 +163,16 @@ func (s *TransferService) DeleteBucket(ctx context.Context, name string) error {
 
 func (s *TransferService) Write(ctx context.Context, ref TransferReference, data []byte) error {
 	os, err := s.js.ObjectStore(ctx, ref.Bucket)
+	if errors.Is(err, jetstream.ErrBucketNotFound) {
+		err := s.CreateBucket(ctx, ref.Bucket, DefaultTTL)
+		if err != nil {
+			return fmt.Errorf("failed to create bucket: %w", err)
+		}
+		os, err = s.js.ObjectStore(ctx, ref.Bucket)
+		if err != nil {
+			return fmt.Errorf("failed to get store after creating bucket: %w", err)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("failed to get store: %w", err)
 	}
