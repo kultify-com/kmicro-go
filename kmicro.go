@@ -125,7 +125,7 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 		},
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("could not create nats service: %w", err)
 	}
 	// we need a group to make our endpoints available under svcName.ENDPOINT
 	km.Group = km.natsSvc.AddGroup(km.svcName)
@@ -165,13 +165,12 @@ func (km *KMicro) Logger(module string) *slog.Logger {
 }
 
 // AddEndpoint registers a new endpoint to handle incoming requests
-func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler ServiceHandler) {
+func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler ServiceHandler) error {
 	ctx = AppendSlogCtx(ctx, slog.String("endpoint", subject))
 	metricAttrs := metric.WithAttributes(
 		semconv.RPCMethod(subject),
 	)
-
-	km.Group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
+	err := km.Group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
 		go func() {
 			start := time.Now()
 			propagator := propagation.TraceContext{}
@@ -215,6 +214,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 			km.logger.InfoContext(ctx, "handled request", slog.String("duration", time.Since(start).String()))
 		}()
 	}))
+	return err
 }
 
 // the given ctx should be returned by getContext from kmicro
