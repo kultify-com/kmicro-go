@@ -252,7 +252,7 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	propagator.Inject(ctx, propagation.HeaderCarrier(header))
 	defer span.End()
 	// -----
-	km.logger.InfoContext(ctx, "call")
+	km.logger.InfoContext(ctx, "call", slog.String("endpoint", endpoint))
 	respMsg, err := km.Nats.RequestMsgWithContext(ctx, &nats.Msg{
 		Subject: endpoint,
 		Header:  header,
@@ -261,7 +261,7 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	if err != nil { // this error is from nats and not from a called service
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
-		km.logger.ErrorContext(ctx, fmt.Sprintf("nats error: %s", err.Error()))
+		km.logger.ErrorContext(ctx, fmt.Sprintf("nats error (%s): %s", endpoint, err.Error()))
 		return nil, err
 	}
 	isResponseErrorMsg := respMsg.Header.Get("Nats-Service-Error-Code")
@@ -269,10 +269,10 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 		errorMsg := respMsg.Header.Get("Nats-Service-Error")
 		span.SetStatus(codes.Error, errorMsg)
 		span.RecordError(err)
-		km.logger.ErrorContext(ctx, fmt.Sprintf("action error: %s", isResponseErrorMsg))
+		km.logger.ErrorContext(ctx, fmt.Sprintf("action error (%s): %s", endpoint, isResponseErrorMsg))
 		return nil, fmt.Errorf("action error: %s", errorMsg)
 	}
-	km.logger.InfoContext(ctx, "received call response")
+	km.logger.InfoContext(ctx, "received call response", slog.String("endpoint", endpoint))
 	span.SetStatus(codes.Ok, "")
 	return respMsg.Data, nil
 }
