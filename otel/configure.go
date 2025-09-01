@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	runtime "go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -60,6 +61,12 @@ func ConfigureOpenTelemetry(ctx context.Context, svcName string) (shutdown func(
 	meter = meterProvider.Meter(svcName)
 	shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
 	otel.SetMeterProvider(meterProvider)
+
+	err = runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second))
+	if err != nil {
+		handleErr(err)
+		return
+	}
 
 	return
 }

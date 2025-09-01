@@ -194,7 +194,6 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 		ctx = context.WithValue(ctx, callDepthCtxKey, callDepth)
 		ctx, span := km.tracer.Start(ctx, fmt.Sprintf("handle: %s", subject))
 		defer span.End()
-
 		km.logger.InfoContext(ctx, "handle request")
 		result, err := handler(ctx, req.Data())
 		duration := time.Since(start)
