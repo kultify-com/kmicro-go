@@ -206,7 +206,14 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 			km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
 			return
 		}
-		req.Respond(result)
+		err = req.Respond(result)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			km.logger.ErrorContext(ctx, fmt.Sprintf("could not respond to request (%s): %s", subject, err.Error()))
+			km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
+			return
+		}
 		span.SetStatus(codes.Ok, "")
 		km.endpointProcessedRequests.Add(ctx, 1, metricAttrs)
 		km.logger.InfoContext(ctx, "handled request", slog.String("duration", time.Since(start).String()))
