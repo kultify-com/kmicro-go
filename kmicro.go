@@ -171,52 +171,55 @@ func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler Servi
 		semconv.RPCMethod(subject),
 	)
 	err := km.Group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
-		start := time.Now()
-		propagator := propagation.TraceContext{}
-		natsHeaders := req.Headers()
-		ctx = propagator.Extract(ctx, propagation.HeaderCarrier(natsHeaders))
+		go func() {
 
-		// extract our custom known headers from the nats message
-		customHeaders := make(Headers, len(km.knownHeaders))
-		for _, k := range km.knownHeaders {
-			if val := natsHeaders.Get(k); val != "" {
-				customHeaders[k] = val
+			start := time.Now()
+			propagator := propagation.TraceContext{}
+			natsHeaders := req.Headers()
+			ctx = propagator.Extract(ctx, propagation.HeaderCarrier(natsHeaders))
+
+			// extract our custom known headers from the nats message
+			customHeaders := make(Headers, len(km.knownHeaders))
+			for _, k := range km.knownHeaders {
+				if val := natsHeaders.Get(k); val != "" {
+					customHeaders[k] = val
+				}
 			}
-		}
-		ctx = ContextWithCustomHeaders(ctx, customHeaders)
+			ctx = ContextWithCustomHeaders(ctx, customHeaders)
 
-		callDepth := 0
-		callDepthStr := req.Headers().Get(headerCallDepthKey)
-		if callDepthStr != "" {
-			val, _ := strconv.Atoi(callDepthStr)
-			callDepth = val
-		}
-		ctx = context.WithValue(ctx, callDepthCtxKey, callDepth)
-		ctx, span := km.tracer.Start(ctx, fmt.Sprintf("handle: %s", subject))
-		defer span.End()
-		km.logger.InfoContext(ctx, "handle request")
-		result, err := handler(ctx, req.Data())
-		duration := time.Since(start)
-		km.endpointLatency.Record(ctx, duration.Milliseconds(), metricAttrs)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			km.logger.ErrorContext(ctx, fmt.Sprintf("handler error (%s): %s", subject, err.Error()))
-			req.Error("500", err.Error(), nil)
-			km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
-			return
-		}
-		err = req.Respond(result)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			km.logger.ErrorContext(ctx, fmt.Sprintf("could not respond to request (%s): %s", subject, err.Error()))
-			km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
-			return
-		}
-		span.SetStatus(codes.Ok, "")
-		km.endpointProcessedRequests.Add(ctx, 1, metricAttrs)
-		km.logger.InfoContext(ctx, "handled request", slog.String("duration", time.Since(start).String()))
+			callDepth := 0
+			callDepthStr := req.Headers().Get(headerCallDepthKey)
+			if callDepthStr != "" {
+				val, _ := strconv.Atoi(callDepthStr)
+				callDepth = val
+			}
+			ctx = context.WithValue(ctx, callDepthCtxKey, callDepth)
+			ctx, span := km.tracer.Start(ctx, fmt.Sprintf("handle: %s", subject))
+			defer span.End()
+			km.logger.InfoContext(ctx, "handle request")
+			result, err := handler(ctx, req.Data())
+			duration := time.Since(start)
+			km.endpointLatency.Record(ctx, duration.Milliseconds(), metricAttrs)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				km.logger.ErrorContext(ctx, fmt.Sprintf("handler error (%s): %s", subject, err.Error()))
+				req.Error("500", err.Error(), nil)
+				km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
+				return
+			}
+			err = req.Respond(result)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				km.logger.ErrorContext(ctx, fmt.Sprintf("could not respond to request (%s): %s", subject, err.Error()))
+				km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
+				return
+			}
+			span.SetStatus(codes.Ok, "")
+			km.endpointProcessedRequests.Add(ctx, 1, metricAttrs)
+			km.logger.InfoContext(ctx, "handled request", slog.String("duration", time.Since(start).String()))
+		}()
 	}))
 	return err
 }
