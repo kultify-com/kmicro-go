@@ -50,7 +50,7 @@ func TestKMicro(t *testing.T) {
 		serviceName := "test_service"
 		km := NewKMicro(serviceName, "0.0.1", WithKnownHeaders([]string{"X-AUTH"}))
 		ctx := context.Background()
-		require.NoError(t, km.Start(ctx, natsURL))
+		require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
 		defer km.Stop()
 
 		var action1ReceivedData, action2ReceivedData map[string]interface{}
@@ -96,7 +96,7 @@ func TestKMicro(t *testing.T) {
 		km := NewKMicro(serviceName, "0.0.1", WithKnownHeaders([]string{"X-AUTH"}))
 
 		ctx := context.TODO()
-		require.NoError(t, km.Start(ctx, natsURL))
+		require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
 		defer km.Stop()
 
 		km.AddEndpoint(ctx, "action1", func(ctx context.Context, data []byte) ([]byte, error) {

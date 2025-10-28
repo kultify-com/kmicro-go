@@ -96,23 +96,62 @@ func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
 	return km
 }
 
+type StartOption func(*startOptions)
+
+type startOptions struct {
+	natsURL  string
+	natsConn *nats.Conn
+}
+
+func WithNatsURL(url string) StartOption {
+	return func(o *startOptions) {
+		o.natsURL = url
+	}
+}
+
+func WithNatsConnection(conn *nats.Conn) StartOption {
+	return func(o *startOptions) {
+		o.natsConn = conn
+	}
+}
+
 // Connect to nats and setup the micro service
 // Use [AddEndpoints] to add endpoints to the service
-func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
+func (km *KMicro) Start(ctx context.Context, options ...StartOption) error {
+	startOpts := startOptions{
+		natsURL: "",
+	}
+	for _, o := range options {
+		o(&startOpts)
+	}
+
+	if startOpts.natsURL != "" && startOpts.natsConn != nil {
+		return errors.New("cannot use both nats url and nats connection")
+	}
+	if startOpts.natsConn == nil && startOpts.natsURL == "" {
+		return errors.New("either nats url or nats connection must be provided")
+	}
+
 	km.tracer = otel.GetTracerProvider().Tracer("kmicro", trace.WithInstrumentationAttributes(
 		semconv.ServiceName(km.svcName),
 	))
 	km.meter = otel.GetMeterProvider().Meter("kmicro", metric.WithInstrumentationAttributes(
 		semconv.ServiceName(km.svcName),
 	))
-	km.logger.Info("connecting to nats...")
-	nc, err := nats.Connect(natsUrl)
-	if err != nil {
-		return err
+
+	if startOpts.natsConn != nil {
+		km.Nats = startOpts.natsConn
 	}
-	km.logger.Info("connected to nats")
-	km.Nats = nc
-	km.natsSvc, err = micro.AddService(nc, micro.Config{
+	if startOpts.natsURL != "" {
+		km.logger.Info("connecting to nats...")
+		nc, err := nats.Connect(startOpts.natsURL)
+		if err != nil {
+			return err
+		}
+		km.logger.Info("connected to nats")
+		km.Nats = nc
+	}
+	natsSvc, err := micro.AddService(km.Nats, micro.Config{
 		Name:    km.svcName,
 		Version: km.svcVersion,
 		DoneHandler: func(srv micro.Service) {
@@ -127,6 +166,7 @@ func (km *KMicro) Start(ctx context.Context, natsUrl string) error {
 	if err != nil {
 		return fmt.Errorf("could not create nats service: %w", err)
 	}
+	km.natsSvc = natsSvc
 	// we need a group to make our endpoints available under svcName.ENDPOINT
 	km.Group = km.natsSvc.AddGroup(km.svcName)
 
