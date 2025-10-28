@@ -25,8 +25,9 @@ type KMicro struct {
 	svcName    string
 	svcVersion string
 
-	Nats    *nats.Conn
-	natsSvc micro.Service
+	Nats               *nats.Conn
+	natsSvc            micro.Service
+	isExternalNatsConn bool
 
 	knownHeaders []string
 	logger       *slog.Logger
@@ -141,6 +142,7 @@ func (km *KMicro) Start(ctx context.Context, options ...StartOption) error {
 
 	if startOpts.natsConn != nil {
 		km.Nats = startOpts.natsConn
+		km.isExternalNatsConn = true
 	}
 	if startOpts.natsURL != "" {
 		km.logger.Info("connecting to nats...")
@@ -194,7 +196,7 @@ func (km *KMicro) Stop() {
 			km.logger.Error(fmt.Sprintf("could not stop nats service %s", err.Error()))
 		}
 	}
-	if km.Nats != nil {
+	if km.Nats != nil && !km.isExternalNatsConn {
 		km.Nats.Close()
 	}
 }
