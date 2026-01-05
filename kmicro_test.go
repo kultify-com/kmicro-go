@@ -55,7 +55,8 @@ func TestKMicro(t *testing.T) {
 
 		var action1ReceivedData, action2ReceivedData map[string]interface{}
 
-		km.AddEndpoint(ctx, "action1", func(ctx context.Context, data []byte) ([]byte, error) {
+		g1 := km.AddGroup("test_service")
+		km.AddEndpoint(ctx, g1, "action1", func(ctx context.Context, data []byte) ([]byte, error) {
 			json.Unmarshal(data, &action1ReceivedData)
 			customHeaders, ok := CustomHeadersFromContext(ctx)
 			assert.True(t, ok, "it should set custom headers")
@@ -69,7 +70,7 @@ func TestKMicro(t *testing.T) {
 			return action2Result, nil
 		})
 
-		km.AddEndpoint(ctx, "action2", func(ctx context.Context, data []byte) ([]byte, error) {
+		km.AddEndpoint(ctx, g1, "action2", func(ctx context.Context, data []byte) ([]byte, error) {
 			json.Unmarshal(data, &action2ReceivedData)
 			response, _ := json.Marshal(map[string]string{"ret": "var"})
 			return response, nil
@@ -99,14 +100,15 @@ func TestKMicro(t *testing.T) {
 		require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
 		defer km.Stop()
 
-		km.AddEndpoint(ctx, "action1", func(ctx context.Context, data []byte) ([]byte, error) {
+		g1 := km.AddGroup(serviceName)
+		km.AddEndpoint(ctx, g1, "action1", func(ctx context.Context, data []byte) ([]byte, error) {
 			val, err := km.Call(ctx, serviceName+".action2", []byte(`{"foo":"bar"}`))
 			log.Printf("got from action2: val %v, err %v", val, err)
 
 			return val, err
 		})
 
-		km.AddEndpoint(ctx, "action2", func(ctx context.Context, data []byte) ([]byte, error) {
+		km.AddEndpoint(ctx, g1, "action2", func(ctx context.Context, data []byte) ([]byte, error) {
 			return nil, errors.New("some error")
 		})
 

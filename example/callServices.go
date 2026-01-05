@@ -17,8 +17,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	node.AddEndpoint(ctx, "hello", func(ctx context.Context, data []byte) ([]byte, error) {
+	g := node.AddGroup("service1")
+	node.AddEndpoint(ctx, g, "hello", func(ctx context.Context, data []byte) ([]byte, error) {
 		node.Logger("hello endpoint").InfoContext(ctx, "handle hello")
 		return []byte{1, 2, 3}, nil
 	})
@@ -30,8 +30,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	node2.AddEndpoint(ctx, "get_data", func(ctx context.Context, data []byte) ([]byte, error) {
+	g2 := node2.AddGroup("service2")
+	node2.AddEndpoint(ctx, g2, "get_data", func(ctx context.Context, data []byte) ([]byte, error) {
 		// return some json data
 		node2.Logger("get data endpoint").InfoContext(ctx, "handle get data")
 		s1Result, err := node2.Call(ctx, "service1.hello", nil)

@@ -21,7 +21,6 @@ import (
 )
 
 type KMicro struct {
-	micro.Group
 	svcName    string
 	svcVersion string
 
@@ -77,6 +76,8 @@ func WithLogger(logger *slog.Logger) func(*kmicroOptions) {
 	}
 }
 
+// NewKMicro creates a new kmicro instance
+// svcName is the name of the nats service. Sub-services can be added using [AddGroup]
 func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
 	configuredOptions := kmicroOptions{}
 	for _, o := range options {
@@ -169,15 +170,13 @@ func (km *KMicro) Start(ctx context.Context, options ...StartOption) error {
 		return fmt.Errorf("could not create nats service: %w", err)
 	}
 	km.natsSvc = natsSvc
-	// we need a group to make our endpoints available under svcName.ENDPOINT
-	km.Group = km.natsSvc.AddGroup(km.svcName)
 
 	// setup meters
 	km.endpointLatency, err = km.meter.Int64Histogram("kmicro.endpoint.latency", metric.WithUnit("ms"))
 	if err != nil {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.latency histogram %s", err.Error()))
 	}
-	km.endpointProcessedRequests, err = km.meter.Int64Counter("kmicro.endpoint.requests.success", metric.WithDescription("The number of successfull handled requests"))
+	km.endpointProcessedRequests, err = km.meter.Int64Counter("kmicro.endpoint.requests.success", metric.WithDescription("The number of successful handled requests"))
 	if err != nil {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.requests.success histogram %s", err.Error()))
 	}
@@ -186,6 +185,19 @@ func (km *KMicro) Start(ctx context.Context, options ...StartOption) error {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.requests.success histogram %s", err.Error()))
 	}
 	return nil
+}
+
+type Group struct {
+	micro.Group
+	Name string
+}
+
+func (km *KMicro) AddGroup(name string) *Group {
+	g := km.natsSvc.AddGroup(name)
+	return &Group{
+		Group: g,
+		Name:  name,
+	}
 }
 
 // Stop is used for a clean node shutdown
@@ -207,12 +219,12 @@ func (km *KMicro) Logger(module string) *slog.Logger {
 }
 
 // AddEndpoint registers a new endpoint to handle incoming requests
-func (km *KMicro) AddEndpoint(ctx context.Context, subject string, handler ServiceHandler) error {
+func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string, handler ServiceHandler) error {
 	ctx = AppendSlogCtx(ctx, slog.String("endpoint", subject))
 	metricAttrs := metric.WithAttributes(
-		semconv.RPCMethod(subject),
+		semconv.RPCMethod(fmt.Sprintf("%s.%s", group.Name, subject)),
 	)
-	err := km.Group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
+	err := group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
 		// we need to wrap our handler code because nats has to return as fast a possible
 		// to acknowledge the message
 		go func() {
