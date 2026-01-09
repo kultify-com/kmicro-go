@@ -1,6 +1,6 @@
 module github.com/kultify-com/kmicro-go
 
-go 1.25.3
+go 1.25.5
 
 require (
 	github.com/nats-io/nats.go v1.48.0
@@ -39,7 +39,6 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.4 // indirect
 	github.com/klauspost/compress v1.18.2 // indirect

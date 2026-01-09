@@ -220,7 +220,7 @@ func (km *KMicro) Logger(module string) *slog.Logger {
 
 // AddEndpoint registers a new endpoint to handle incoming requests
 func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string, handler ServiceHandler) error {
-	ctx = AppendSlogCtx(ctx, slog.String("endpoint", subject))
+	ctx = AppendSlogCtx(ctx, slog.String("endpoint", subject), slog.String("group", group.Name))
 	metricAttrs := metric.WithAttributes(
 		semconv.RPCMethod(fmt.Sprintf("%s.%s", group.Name, subject)),
 	)
@@ -273,7 +273,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 			}
 			span.SetStatus(codes.Ok, "")
 			km.endpointProcessedRequests.Add(ctx, 1, metricAttrs)
-			km.logger.InfoContext(ctx, "handled request", slog.String("duration", time.Since(start).String()))
+			km.logger.InfoContext(ctx, "handled request", slog.String("group", group.Name), slog.String("duration", time.Since(start).String()))
 		}()
 	}))
 	return err
