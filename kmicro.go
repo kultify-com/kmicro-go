@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/getsentry/sentry-go"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
 	"go.opentelemetry.io/otel"
@@ -230,15 +229,9 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 		// to acknowledge the message
 		go func() {
 			start := time.Now()
-			localHub := sentry.CurrentHub().Clone()
-			localHub.ConfigureScope(func(scope *sentry.Scope) {
-				scope.SetTag("endpoint", subject)
-				scope.SetTag("group", group.Name)
-			})
 			propagator := propagation.TraceContext{}
 			natsHeaders := req.Headers()
 			ctx = propagator.Extract(ctx, propagation.HeaderCarrier(natsHeaders))
-			ctx = sentry.SetHubOnContext(ctx, localHub)
 			// extract our custom known headers from the nats message
 			customHeaders := make(Headers, len(km.knownHeaders))
 			for _, k := range km.knownHeaders {
@@ -267,9 +260,6 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 				km.logger.ErrorContext(ctx, fmt.Sprintf("handler error (%s): %s", subject, err.Error()))
 				req.Error("500", err.Error(), nil)
 				km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
-				if hub := sentry.GetHubFromContext(ctx); hub != nil {
-					hub.CaptureException(err)
-				}
 				return
 			}
 			err = req.Respond(result)
@@ -278,9 +268,6 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 				span.SetStatus(codes.Error, err.Error())
 				km.logger.ErrorContext(ctx, fmt.Sprintf("could not respond to request (%s): %s", subject, err.Error()))
 				km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
-				if hub := sentry.GetHubFromContext(ctx); hub != nil {
-					hub.CaptureException(err)
-				}
 				return
 			}
 			span.SetStatus(codes.Ok, "")
