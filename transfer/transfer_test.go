@@ -9,6 +9,7 @@ import (
 	"github.com/kultify-com/kmicro-go/transfer"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/stretchr/testify/assert"
 	"github.com/testcontainers/testcontainers-go"
 	testContainerNats "github.com/testcontainers/testcontainers-go/modules/nats"
 )
@@ -80,4 +81,15 @@ func TestStoreData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to delete data: %s", err)
 	}
+}
+
+func TestWriteToNonExistingBucket(t *testing.T) {
+	transferSvc := transfer.NewTransferService(js)
+	ref := transfer.TransferReference{
+		Bucket: "non-existing-bucket",
+		Key:    "test-key",
+	}
+	data := []byte("test data")
+	err := transferSvc.Write(t.Context(), ref, data)
+	assert.NoError(t, err, "should write to non-existing bucket")
 }
