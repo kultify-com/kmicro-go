@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"go.mongodb.org/mongo-driver/v2/event"
+	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/v2/mongo/otelmongo"
 	runtime "go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -91,6 +93,10 @@ func newTracerProvider(ctx context.Context, svcName string) (*sdkTrace.TracerPro
 		sdkTrace.WithResource(res),
 	)
 	return traceProvider, nil
+}
+
+func NewMongoMonitor() *event.CommandMonitor {
+	return otelmongo.NewMonitor()
 }
 
 func newMeterProvider(ctx context.Context, svcName string) (*sdkMetric.MeterProvider, error) {
