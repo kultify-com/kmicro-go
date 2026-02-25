@@ -278,8 +278,11 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 	return err
 }
 
-// the given ctx should be returned by getContext from kmicro
 func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byte, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		km.logger.WarnContext(ctx, "Call invoked without context deadline", slog.String("endpoint", endpoint))
+	}
+
 	header := make(nats.Header)
 
 	// prevent infinite loops
