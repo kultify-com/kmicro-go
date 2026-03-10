@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/nats-io/nats.go/micro"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -28,8 +29,12 @@ type KMicro struct {
 	natsSvc            micro.Service
 	isExternalNatsConn bool
 
-	knownHeaders []string
-	logger       *slog.Logger
+	js jetstream.JetStream
+
+	knownHeaders       []string
+	eventSubjectPrefix string
+	logger             *slog.Logger
+	eventConsumers     []jetstream.ConsumeContext
 
 	// tracing
 	tracer                    trace.Tracer
@@ -37,6 +42,10 @@ type KMicro struct {
 	endpointLatency           metric.Int64Histogram
 	endpointProcessedRequests metric.Int64Counter
 	endpointFailedRequests    metric.Int64Counter
+	eventPublished            metric.Int64Counter
+	eventProcessed            metric.Int64Counter
+	eventFailed               metric.Int64Counter
+	eventLatency              metric.Int64Histogram
 }
 
 type CtxKey int
@@ -58,8 +67,9 @@ const headerCallDepthKey = "kmicro_callDepth"
 type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
 type kmicroOptions struct {
-	knownHeaders []string
-	logger       *slog.Logger
+	knownHeaders       []string
+	eventSubjectPrefix string
+	logger             *slog.Logger
 }
 
 type option func(option *kmicroOptions)
@@ -73,6 +83,12 @@ func WithKnownHeaders(knownHeaders []string) func(*kmicroOptions) {
 func WithLogger(logger *slog.Logger) func(*kmicroOptions) {
 	return func(o *kmicroOptions) {
 		o.logger = logger
+	}
+}
+
+func WithEventSubjectPrefix(prefix string) func(*kmicroOptions) {
+	return func(o *kmicroOptions) {
+		o.eventSubjectPrefix = prefix
 	}
 }
 
@@ -90,10 +106,11 @@ func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
 		}))
 	}
 	km := KMicro{
-		svcName:      svcName,
-		svcVersion:   svcVersion,
-		knownHeaders: configuredOptions.knownHeaders,
-		logger:       setupLogger(usedLogger, svcName, svcVersion),
+		svcName:            svcName,
+		svcVersion:         svcVersion,
+		knownHeaders:       configuredOptions.knownHeaders,
+		eventSubjectPrefix: configuredOptions.eventSubjectPrefix,
+		logger:             setupLogger(usedLogger, svcName, svcVersion),
 	}
 	return km
 }
@@ -184,6 +201,22 @@ func (km *KMicro) Start(ctx context.Context, options ...StartOption) error {
 	if err != nil {
 		km.logger.Error(fmt.Sprintf("could not create endpoint.requests.success histogram %s", err.Error()))
 	}
+	km.eventPublished, err = km.meter.Int64Counter("kmicro.events.published", metric.WithDescription("The number of published events"))
+	if err != nil {
+		km.logger.Error(fmt.Sprintf("could not create events.published counter %s", err.Error()))
+	}
+	km.eventProcessed, err = km.meter.Int64Counter("kmicro.events.processed", metric.WithDescription("The number of successfully processed events"))
+	if err != nil {
+		km.logger.Error(fmt.Sprintf("could not create events.processed counter %s", err.Error()))
+	}
+	km.eventFailed, err = km.meter.Int64Counter("kmicro.events.failed", metric.WithDescription("The number of failed event processing attempts"))
+	if err != nil {
+		km.logger.Error(fmt.Sprintf("could not create events.failed counter %s", err.Error()))
+	}
+	km.eventLatency, err = km.meter.Int64Histogram("kmicro.events.latency", metric.WithUnit("ms"))
+	if err != nil {
+		km.logger.Error(fmt.Sprintf("could not create events.latency histogram %s", err.Error()))
+	}
 	return nil
 }
 
@@ -200,8 +233,23 @@ func (km *KMicro) AddGroup(name string) *Group {
 	}
 }
 
+func (km *KMicro) JetStream() (jetstream.JetStream, error) {
+	if km.js != nil {
+		return km.js, nil
+	}
+	js, err := jetstream.New(km.Nats)
+	if err != nil {
+		return nil, fmt.Errorf("could not create jetstream context: %w", err)
+	}
+	km.js = js
+	return js, nil
+}
+
 // Stop is used for a clean node shutdown
 func (km *KMicro) Stop() {
+	for _, c := range km.eventConsumers {
+		c.Stop()
+	}
 	if km.natsSvc != nil {
 		err := km.natsSvc.Stop()
 		if err != nil {
