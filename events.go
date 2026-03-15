@@ -17,11 +17,12 @@ import (
 )
 
 type DomainEvent struct {
-	ID      string `json:"id"`
-	Domain  string `json:"domain"`
-	Type    string `json:"type"`
-	OrgID   string `json:"orgId"`
-	Payload []byte `json:"payload"`
+	ID       string `json:"id"`
+	Domain   string `json:"domain"`
+	EntityID string `json:"entityId"`
+	Type     string `json:"type"`
+	OrgID    string `json:"orgId"`
+	Payload  []byte `json:"payload"`
 }
 
 type EventHandler func(ctx context.Context, event DomainEvent) error

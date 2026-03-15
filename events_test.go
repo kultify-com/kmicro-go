@@ -60,11 +60,12 @@ func TestEvents(t *testing.T) {
 		require.NoError(t, err)
 
 		err = km.Publish(ctx, DomainEvent{
-			ID:      "evt-001",
-			Domain:  "order",
-			Type:    "completed",
-			OrgID:   "org-123",
-			Payload: []byte(`{"orderId":"123"}`),
+			ID:       "evt-001",
+			Domain:   "order",
+			EntityID: "order-123",
+			Type:     "completed",
+			OrgID:    "org-123",
+			Payload:  []byte(`{"orderId":"123"}`),
 		})
 		require.NoError(t, err)
 
@@ -102,11 +103,12 @@ func TestEvents(t *testing.T) {
 
 		pubCtx := ContextWithCustomHeaders(ctx, Headers{"X-TENANT": "tenant-42"})
 		err = km.Publish(pubCtx, DomainEvent{
-			ID:      "evt-hdr-001",
-			Domain:  "header",
-			Type:    "test",
-			OrgID:   "org-42",
-			Payload: []byte(`{}`),
+			ID:       "evt-hdr-001",
+			Domain:   "header",
+			EntityID: "header-001",
+			Type:     "test",
+			OrgID:    "org-42",
+			Payload:  []byte(`{}`),
 		})
 		require.NoError(t, err)
 
@@ -139,11 +141,12 @@ func TestEvents(t *testing.T) {
 		require.NoError(t, err)
 
 		err = km.Publish(ctx, DomainEvent{
-			ID:      "evt-nak-001",
-			Domain:  "failure",
-			Type:    "test",
-			OrgID:   "org-1",
-			Payload: []byte(`{}`),
+			ID:       "evt-nak-001",
+			Domain:   "failure",
+			EntityID: "failure-001",
+			Type:     "test",
+			OrgID:    "org-1",
+			Payload:  []byte(`{}`),
 		})
 		require.NoError(t, err)
 
@@ -179,11 +182,12 @@ func TestEvents(t *testing.T) {
 		require.NoError(t, err)
 
 		evt := DomainEvent{
-			ID:      "evt-dedup-same-id",
-			Domain:  "test",
-			Type:    "test",
-			OrgID:   "org-1",
-			Payload: []byte(`{"attempt":1}`),
+			ID:       "evt-dedup-same-id",
+			Domain:   "test",
+			EntityID: "test-001",
+			Type:     "test",
+			OrgID:    "org-1",
+			Payload:  []byte(`{"attempt":1}`),
 		}
 		require.NoError(t, km.Publish(ctx, evt))
 		require.NoError(t, km.Publish(ctx, evt))
