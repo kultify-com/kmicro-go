@@ -162,3 +162,31 @@ func TestKMicro_EndpointInterceptor(t *testing.T) {
 	_, err := km.Call(cctx, "ic_service.guarded", []byte("{}"))
 	require.Error(t, err, "call without trusted X-AUTH must be rejected")
 }
+
+// TestKMicro_SequentialRequestsNotCanceledByPriorDeadline guards the endpoint
+// handler's per-request context isolation: because each request carries a
+// deadline, the handler installs a WithDeadline+cancel. If that derived from a
+// context shared across request goroutines, the first request's cancel would
+// cancel every later request. Each call here must reach a non-canceled handler.
+func TestKMicro_SequentialRequestsNotCanceledByPriorDeadline(t *testing.T) {
+	km := NewKMicro("seq_service", "0.0.1")
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	g := km.AddGroup("seq_service")
+	require.NoError(t, km.AddEndpoint(ctx, g, "check", func(ctx context.Context, _ []byte) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return []byte("ok"), nil
+	}))
+
+	for i := 0; i < 3; i++ {
+		callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		resp, err := km.Call(callCtx, "seq_service.check", []byte("{}"))
+		cancel()
+		require.NoErrorf(t, err, "call %d must not be canceled by a prior request's deadline", i)
+		assert.Equal(t, "ok", string(resp))
+	}
+}

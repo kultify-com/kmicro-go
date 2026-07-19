@@ -307,7 +307,11 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 			start := time.Now()
 			propagator := propagation.TraceContext{}
 			natsHeaders := req.Headers()
-			ctx = propagator.Extract(ctx, propagation.HeaderCarrier(natsHeaders))
+			// Derive a request-scoped context; never reassign the closure-captured
+			// `ctx` (the registration-time parameter shared across every request
+			// goroutine). A per-request deadline+cancel below would otherwise cancel
+			// the shared ctx when this request returns, canceling later requests.
+			reqCtx := propagator.Extract(ctx, propagation.HeaderCarrier(natsHeaders))
 			// extract our custom known headers from the nats message
 			customHeaders := make(Headers, len(km.knownHeaders))
 			for _, k := range km.knownHeaders {
@@ -315,7 +319,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 					customHeaders[k] = val
 				}
 			}
-			ctx = ContextWithCustomHeaders(ctx, customHeaders)
+			reqCtx = ContextWithCustomHeaders(reqCtx, customHeaders)
 
 			callDepth := 0
 			callDepthStr := req.Headers().Get(headerCallDepthKey)
@@ -323,51 +327,51 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 				val, _ := strconv.Atoi(callDepthStr)
 				callDepth = val
 			}
-			ctx = context.WithValue(ctx, callDepthCtxKey, callDepth)
+			reqCtx = context.WithValue(reqCtx, callDepthCtxKey, callDepth)
 
 			// bound the handler ctx to whatever's left of the caller's deadline, so a
 			// caller that has already timed out doesn't leave the handler running on.
 			if dl := natsHeaders.Get(headerDeadlineKey); dl != "" {
 				if ns, perr := strconv.ParseInt(dl, 10, 64); perr == nil {
 					var cancel context.CancelFunc
-					ctx, cancel = context.WithDeadline(ctx, time.Unix(0, ns))
+					reqCtx, cancel = context.WithDeadline(reqCtx, time.Unix(0, ns))
 					defer cancel()
 				}
 			}
 
-			ctx, span := km.tracer.Start(ctx, fmt.Sprintf("handle: %s", subject))
+			reqCtx, span := km.tracer.Start(reqCtx, fmt.Sprintf("handle: %s", subject))
 			defer span.End()
-			km.logger.InfoContext(ctx, "handle request")
+			km.logger.InfoContext(reqCtx, "handle request")
 			for _, ic := range cfg.interceptors {
-				if ierr := ic(ctx, req.Data()); ierr != nil {
+				if ierr := ic(reqCtx, req.Data()); ierr != nil {
 					span.RecordError(ierr)
 					span.SetStatus(codes.Error, ierr.Error())
 					req.Error("403", ierr.Error(), nil)
 					return
 				}
 			}
-			result, err := handler(ctx, req.Data())
+			result, err := handler(reqCtx, req.Data())
 			duration := time.Since(start)
-			km.endpointLatency.Record(ctx, duration.Milliseconds(), metricAttrs)
+			km.endpointLatency.Record(reqCtx, duration.Milliseconds(), metricAttrs)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
-				km.logger.ErrorContext(ctx, fmt.Sprintf("handler error (%s): %s", subject, err.Error()))
+				km.logger.ErrorContext(reqCtx, fmt.Sprintf("handler error (%s): %s", subject, err.Error()))
 				req.Error("500", err.Error(), nil)
-				km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
+				km.endpointFailedRequests.Add(reqCtx, 1, metricAttrs)
 				return
 			}
 			err = req.Respond(result)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
-				km.logger.ErrorContext(ctx, fmt.Sprintf("could not respond to request (%s): %s", subject, err.Error()))
-				km.endpointFailedRequests.Add(ctx, 1, metricAttrs)
+				km.logger.ErrorContext(reqCtx, fmt.Sprintf("could not respond to request (%s): %s", subject, err.Error()))
+				km.endpointFailedRequests.Add(reqCtx, 1, metricAttrs)
 				return
 			}
 			span.SetStatus(codes.Ok, "")
-			km.endpointProcessedRequests.Add(ctx, 1, metricAttrs)
-			km.logger.InfoContext(ctx, "handled request", slog.String("group", group.Name), slog.String("duration", time.Since(start).String()))
+			km.endpointProcessedRequests.Add(reqCtx, 1, metricAttrs)
+			km.logger.InfoContext(reqCtx, "handled request", slog.String("group", group.Name), slog.String("duration", time.Since(start).String()))
 		}()
 	}))
 	return err
