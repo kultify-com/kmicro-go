@@ -64,6 +64,11 @@ var (
 
 const headerCallDepthKey = "kmicro_callDepth"
 
+// headerDeadlineKey carries the caller's context deadline (unix nanos) across the
+// NATS request so the handler goroutine can bound its own ctx to what's left of it,
+// instead of running unbounded after the caller has already given up.
+const headerDeadlineKey = "kmicro_deadline_unix_nano"
+
 type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
 type kmicroOptions struct {
@@ -296,6 +301,17 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 				callDepth = val
 			}
 			ctx = context.WithValue(ctx, callDepthCtxKey, callDepth)
+
+			// bound the handler ctx to whatever's left of the caller's deadline, so a
+			// caller that has already timed out doesn't leave the handler running on.
+			if dl := natsHeaders.Get(headerDeadlineKey); dl != "" {
+				if ns, perr := strconv.ParseInt(dl, 10, 64); perr == nil {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithDeadline(ctx, time.Unix(0, ns))
+					defer cancel()
+				}
+			}
+
 			ctx, span := km.tracer.Start(ctx, fmt.Sprintf("handle: %s", subject))
 			defer span.End()
 			km.logger.InfoContext(ctx, "handle request")
@@ -344,6 +360,9 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 		return nil, maxCallDepthErr
 	}
 	header.Set(headerCallDepthKey, strconv.Itoa(callDepth))
+	if deadline, ok := ctx.Deadline(); ok {
+		header.Set(headerDeadlineKey, strconv.FormatInt(deadline.UnixNano(), 10))
+	}
 	// add our custom headers
 	if currHeaders, ok := ctx.Value(CustomCtxHeaders).(Headers); ok {
 		for _, k := range km.knownHeaders {

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,4 +117,24 @@ func TestKMicro(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "some error")
 	})
+}
+
+func TestKMicro_DeadlinePropagation(t *testing.T) {
+	km := NewKMicro("dl_service", "0.0.1")
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	var gotDeadline bool
+	g := km.AddGroup("dl_service")
+	km.AddEndpoint(ctx, g, "check", func(ctx context.Context, _ []byte) ([]byte, error) {
+		_, gotDeadline = ctx.Deadline()
+		return []byte("ok"), nil
+	})
+
+	callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err := km.Call(callCtx, "dl_service.check", []byte("{}"))
+	require.NoError(t, err)
+	assert.True(t, gotDeadline, "server handler ctx must inherit the caller deadline")
 }
