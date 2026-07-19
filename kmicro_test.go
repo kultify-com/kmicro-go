@@ -138,3 +138,27 @@ func TestKMicro_DeadlinePropagation(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, gotDeadline, "server handler ctx must inherit the caller deadline")
 }
+
+func TestKMicro_EndpointInterceptor(t *testing.T) {
+	km := NewKMicro("ic_service", "0.0.1", WithKnownHeaders([]string{"X-AUTH"}))
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	deny := func(ctx context.Context, _ []byte) error {
+		h, _ := CustomHeadersFromContext(ctx)
+		if h["X-AUTH"] != "trusted" {
+			return errors.New("untrusted caller")
+		}
+		return nil
+	}
+	g := km.AddGroup("ic_service")
+	km.AddEndpoint(ctx, g, "guarded", func(ctx context.Context, _ []byte) ([]byte, error) {
+		return []byte("ok"), nil
+	}, WithInterceptor(deny))
+
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err := km.Call(cctx, "ic_service.guarded", []byte("{}"))
+	require.Error(t, err, "call without trusted X-AUTH must be rejected")
+}

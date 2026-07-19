@@ -71,6 +71,24 @@ const headerDeadlineKey = "kmicro_deadline_unix_nano"
 
 type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
+// EndpointInterceptor runs before a handler; a non-nil error rejects the
+// request with a 403 service error. Use it to scope who may call an endpoint
+// (e.g. only platform instances may invoke "<module>.__http").
+type EndpointInterceptor func(ctx context.Context, data []byte) error
+
+type endpointConfig struct{ interceptors []EndpointInterceptor }
+
+// EndpointOption configures an endpoint at registration time, e.g. attaching
+// interceptors via [WithInterceptor].
+type EndpointOption func(*endpointConfig)
+
+// WithInterceptor registers an [EndpointInterceptor] that runs before the
+// endpoint's handler. Multiple interceptors run in the order they were
+// added; the first non-nil error rejects the request.
+func WithInterceptor(i EndpointInterceptor) EndpointOption {
+	return func(c *endpointConfig) { c.interceptors = append(c.interceptors, i) }
+}
+
 type kmicroOptions struct {
 	knownHeaders       []string
 	eventSubjectPrefix string
@@ -271,8 +289,13 @@ func (km *KMicro) Logger(module string) *slog.Logger {
 	return km.logger.With(slog.String("module", module))
 }
 
-// AddEndpoint registers a new endpoint to handle incoming requests
-func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string, handler ServiceHandler) error {
+// AddEndpoint registers a new endpoint to handle incoming requests. Pass
+// [WithInterceptor] options to scope which callers may invoke the endpoint.
+func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string, handler ServiceHandler, opts ...EndpointOption) error {
+	cfg := endpointConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	ctx = AppendSlogCtx(ctx, slog.String("endpoint", subject), slog.String("group", group.Name))
 	metricAttrs := metric.WithAttributes(
 		semconv.RPCMethod(fmt.Sprintf("%s.%s", group.Name, subject)),
@@ -315,6 +338,14 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 			ctx, span := km.tracer.Start(ctx, fmt.Sprintf("handle: %s", subject))
 			defer span.End()
 			km.logger.InfoContext(ctx, "handle request")
+			for _, ic := range cfg.interceptors {
+				if ierr := ic(ctx, req.Data()); ierr != nil {
+					span.RecordError(ierr)
+					span.SetStatus(codes.Error, ierr.Error())
+					req.Error("403", ierr.Error(), nil)
+					return
+				}
+			}
 			result, err := handler(ctx, req.Data())
 			duration := time.Since(start)
 			km.endpointLatency.Record(ctx, duration.Milliseconds(), metricAttrs)
