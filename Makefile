@@ -13,9 +13,11 @@ SRC_DIR := ./
 .PHONY: test clean run
 
 # Run tests
+# -race is required: the endpoint handler races are only observable under the
+# detector, and consumers run their suites with it.
 test:
 	@echo "Running tests..."
-	$(GOTEST) ./...
+	$(GOTEST) -race ./...
 
 # Update dependencies
 tidy:
