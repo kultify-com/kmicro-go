@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -189,4 +190,49 @@ func TestKMicro_SequentialRequestsNotCanceledByPriorDeadline(t *testing.T) {
 		require.NoErrorf(t, err, "call %d must not be canceled by a prior request's deadline", i)
 		assert.Equal(t, "ok", string(resp))
 	}
+}
+
+// TestKMicro_ErroringEndpointDoesNotRaceServiceStats guards the endpoint
+// handler's use of micro.Request. nats.go's reqHandler reads req.respondError
+// to update endpoint stats as soon as Handle returns, so a Request touched
+// after that read is a data race and corrupts the stats it feeds. The handler
+// wrapper returns immediately and finishes on its own goroutine, so it must
+// answer the caller without going back to the Request. Concurrent callers are
+// what make the two accesses overlap; sequential ones do not reproduce it.
+// Run with -race.
+func TestKMicro_ErroringEndpointDoesNotRaceServiceStats(t *testing.T) {
+	km := NewKMicro("race_service", "0.0.1")
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	g := km.AddGroup("race_service")
+	require.NoError(t, km.AddEndpoint(ctx, g, "fails", func(ctx context.Context, _ []byte) ([]byte, error) {
+		return nil, errors.New("boom")
+	}))
+	require.NoError(t, km.AddEndpoint(ctx, g, "succeeds", func(ctx context.Context, _ []byte) ([]byte, error) {
+		return []byte("ok"), nil
+	}))
+
+	var wg sync.WaitGroup
+	for w := 0; w < 16; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 25; i++ {
+				cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				_, err := km.Call(cctx, "race_service.fails", []byte("{}"))
+				cancel()
+				assert.Error(t, err, "handler error must reach the caller")
+
+				cctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+				resp, err := km.Call(cctx, "race_service.succeeds", []byte("{}"))
+				cancel()
+				if assert.NoError(t, err, "successful handler must reach the caller") {
+					assert.Equal(t, "ok", string(resp))
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }

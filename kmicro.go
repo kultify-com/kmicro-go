@@ -301,12 +301,18 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 		semconv.RPCMethod(fmt.Sprintf("%s.%s", group.Name, subject)),
 	)
 	err := group.AddEndpoint(subject, micro.HandlerFunc(func(req micro.Request) {
+		// Read everything off the Request before returning, and answer the caller
+		// through `reply` rather than the Request itself. micro's reqHandler reads
+		// req.respondError to update endpoint stats the moment this returns, so a
+		// Request touched from the goroutine below is a data race.
+		natsHeaders := req.Headers()
+		reqData := req.Data()
+		reply := req.Reply()
 		// we need to wrap our handler code because nats has to return as fast a possible
 		// to acknowledge the message
 		go func() {
 			start := time.Now()
 			propagator := propagation.TraceContext{}
-			natsHeaders := req.Headers()
 			// Derive a request-scoped context; never reassign the closure-captured
 			// `ctx` (the registration-time parameter shared across every request
 			// goroutine). A per-request deadline+cancel below would otherwise cancel
@@ -322,7 +328,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 			reqCtx = ContextWithCustomHeaders(reqCtx, customHeaders)
 
 			callDepth := 0
-			callDepthStr := req.Headers().Get(headerCallDepthKey)
+			callDepthStr := natsHeaders.Get(headerCallDepthKey)
 			if callDepthStr != "" {
 				val, _ := strconv.Atoi(callDepthStr)
 				callDepth = val
@@ -343,25 +349,25 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 			defer span.End()
 			km.logger.InfoContext(reqCtx, "handle request")
 			for _, ic := range cfg.interceptors {
-				if ierr := ic(reqCtx, req.Data()); ierr != nil {
+				if ierr := ic(reqCtx, reqData); ierr != nil {
 					span.RecordError(ierr)
 					span.SetStatus(codes.Error, ierr.Error())
-					req.Error("403", ierr.Error(), nil)
+					km.replyError(reply, "403", ierr.Error())
 					return
 				}
 			}
-			result, err := handler(reqCtx, req.Data())
+			result, err := handler(reqCtx, reqData)
 			duration := time.Since(start)
 			km.endpointLatency.Record(reqCtx, duration.Milliseconds(), metricAttrs)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
 				km.logger.ErrorContext(reqCtx, fmt.Sprintf("handler error (%s): %s", subject, err.Error()))
-				req.Error("500", err.Error(), nil)
+				km.replyError(reply, "500", err.Error())
 				km.endpointFailedRequests.Add(reqCtx, 1, metricAttrs)
 				return
 			}
-			err = req.Respond(result)
+			err = km.reply(reply, result)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
@@ -375,6 +381,26 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 		}()
 	}))
 	return err
+}
+
+func (km *KMicro) reply(subject string, data []byte) error {
+	if subject == "" {
+		return nil
+	}
+	return km.Nats.PublishMsg(&nats.Msg{Subject: subject, Data: data})
+}
+
+func (km *KMicro) replyError(subject string, code string, description string) error {
+	if subject == "" {
+		return nil
+	}
+	return km.Nats.PublishMsg(&nats.Msg{
+		Subject: subject,
+		Header: nats.Header{
+			micro.ErrorHeader:     []string{description},
+			micro.ErrorCodeHeader: []string{code},
+		},
+	})
 }
 
 func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byte, error) {
