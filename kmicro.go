@@ -35,6 +35,7 @@ type KMicro struct {
 	eventSubjectPrefix string
 	logger             *slog.Logger
 	eventConsumers     []jetstream.ConsumeContext
+	stopTimeout        time.Duration
 
 	// tracing
 	tracer                    trace.Tracer
@@ -93,9 +94,24 @@ type kmicroOptions struct {
 	knownHeaders       []string
 	eventSubjectPrefix string
 	logger             *slog.Logger
+	stopTimeout        time.Duration
 }
 
+// The wait is a client-side teardown and never includes handler work.
+const defaultStopTimeout = 5 * time.Second
+
+// ErrConsumersStillSubscribed reports that a node was left subscribed: messages
+// it receives now are discarded unacked and redeliver after the consumer
+// AckWait.
+var ErrConsumersStillSubscribed = errors.New("event consumers did not finish unsubscribing")
+
 type option func(option *kmicroOptions)
+
+func WithStopTimeout(timeout time.Duration) func(*kmicroOptions) {
+	return func(o *kmicroOptions) {
+		o.stopTimeout = timeout
+	}
+}
 
 func WithKnownHeaders(knownHeaders []string) func(*kmicroOptions) {
 	return func(o *kmicroOptions) {
@@ -128,12 +144,17 @@ func NewKMicro(svcName string, svcVersion string, options ...option) KMicro {
 			AddSource: true,
 		}))
 	}
+	stopTimeout := configuredOptions.stopTimeout
+	if stopTimeout <= 0 {
+		stopTimeout = defaultStopTimeout
+	}
 	km := KMicro{
 		svcName:            svcName,
 		svcVersion:         svcVersion,
 		knownHeaders:       configuredOptions.knownHeaders,
 		eventSubjectPrefix: configuredOptions.eventSubjectPrefix,
 		logger:             setupLogger(usedLogger, svcName, svcVersion),
+		stopTimeout:        stopTimeout,
 	}
 	return km
 }
@@ -268,20 +289,47 @@ func (km *KMicro) JetStream() (jetstream.JetStream, error) {
 	return js, nil
 }
 
-// Stop is used for a clean node shutdown
+// Stop is used for a clean node shutdown. It returns once every event consumer
+// has finished unsubscribing, or after the configured stop timeout.
 func (km *KMicro) Stop() {
-	for _, c := range km.eventConsumers {
-		c.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), km.stopTimeout)
+	defer cancel()
+	if err := km.StopContext(ctx); err != nil {
+		km.logger.Error(err.Error())
 	}
+}
+
+// StopContext is Stop bounded by the caller's context. It reports
+// [ErrConsumersStillSubscribed] when the context ended before every consumer
+// had unsubscribed.
+func (km *KMicro) StopContext(ctx context.Context) error {
+	err := km.stopEventConsumers(ctx)
 	if km.natsSvc != nil {
-		err := km.natsSvc.Stop()
-		if err != nil {
-			km.logger.Error(fmt.Sprintf("could not stop nats service %s", err.Error()))
+		if stopErr := km.natsSvc.Stop(); stopErr != nil {
+			km.logger.Error(fmt.Sprintf("could not stop nats service %s", stopErr.Error()))
 		}
 	}
 	if km.Nats != nil && !km.isExternalNatsConn {
 		km.Nats.Close()
 	}
+	return err
+}
+
+func (km *KMicro) stopEventConsumers(ctx context.Context) error {
+	closed := make([]<-chan struct{}, 0, len(km.eventConsumers))
+	for _, c := range km.eventConsumers {
+		closed = append(closed, c.Closed())
+		c.Stop()
+	}
+	for i, ch := range closed {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %d of %d remaining: %w",
+				ErrConsumersStillSubscribed, len(closed)-i, len(closed), ctx.Err())
+		}
+	}
+	return nil
 }
 
 // Logger returns a slog.Logger with a module label
