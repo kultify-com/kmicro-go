@@ -212,3 +212,15 @@ func TestKMicro_AHandlerMayWrapItsOwnCode(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, ErrorCodeNotFound, code)
 }
+
+// The fields are exported so a consumer's test can build what Call returns, so
+// a literal missing Wrapped is reachable. It must not panic: the endpoint path
+// calls Error() on kmicro's own request goroutine, which has no recover.
+func TestCodedErrorsSurviveANilWrapped(t *testing.T) {
+	assert.Empty(t, (&CodedError{Code: ErrorCodeNotFound}).Error())
+	assert.Empty(t, (&CallError{Code: ErrorCodeNotFound}).Error())
+
+	code, ok := ErrorCode(&CallError{Code: ErrorCodeNotFound})
+	assert.True(t, ok)
+	assert.Equal(t, ErrorCodeNotFound, code)
+}

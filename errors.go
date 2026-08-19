@@ -15,7 +15,12 @@ type CodedError struct {
 	Wrapped error
 }
 
-func (e *CodedError) Error() string { return e.Wrapped.Error() }
+func (e *CodedError) Error() string {
+	if e.Wrapped == nil {
+		return ""
+	}
+	return e.Wrapped.Error()
+}
 
 func (e *CodedError) Unwrap() error { return e.Wrapped }
 
@@ -28,7 +33,12 @@ type CallError struct {
 	Wrapped error
 }
 
-func (e *CallError) Error() string { return e.Wrapped.Error() }
+func (e *CallError) Error() string {
+	if e.Wrapped == nil {
+		return ""
+	}
+	return e.Wrapped.Error()
+}
 
 func (e *CallError) Unwrap() error { return e.Wrapped }
 

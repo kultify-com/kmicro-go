@@ -509,10 +509,11 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	isResponseErrorMsg := respMsg.Header.Get(micro.ErrorCodeHeader)
 	if isResponseErrorMsg != "" {
 		errorMsg := respMsg.Header.Get(micro.ErrorHeader)
+		callErr := &CallError{Code: isResponseErrorMsg, Wrapped: fmt.Errorf("action error: %s", errorMsg)}
 		span.SetStatus(codes.Error, errorMsg)
-		span.RecordError(err)
+		span.RecordError(callErr)
 		km.logger.ErrorContext(ctx, fmt.Sprintf("action error (%s): %s", endpoint, isResponseErrorMsg))
-		return nil, &CallError{Code: isResponseErrorMsg, Wrapped: fmt.Errorf("action error: %s", errorMsg)}
+		return nil, callErr
 	}
 	km.logger.InfoContext(ctx, "received call response", slog.String("endpoint", endpoint))
 	span.SetStatus(codes.Ok, "")
