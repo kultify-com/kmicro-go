@@ -33,7 +33,9 @@ func ErrorCode(err error) (string, bool) {
 }
 
 func errorCodeOr(err error, fallback string) string {
-	if code, ok := ErrorCode(err); ok {
+	// An empty code must never reach the wire: Call decides a reply is an error
+	// by that header being non-empty, so an empty one reads as success.
+	if code, ok := ErrorCode(err); ok && code != "" {
 		return code
 	}
 	return fallback

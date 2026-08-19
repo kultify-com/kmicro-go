@@ -108,3 +108,28 @@ func TestWithCode(t *testing.T) {
 		assert.Empty(t, code)
 	})
 }
+
+// An empty code must not reach the wire: Call decides an error reply IS an
+// error by the header being non-empty, so an empty code would turn a handler
+// failure into a silent empty success.
+func TestKMicro_EmptyCodeStillAnswersAsAFailure(t *testing.T) {
+	km := NewKMicro("empty_code_service", "0.0.1")
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	g := km.AddGroup("empty_code_service")
+	require.NoError(t, km.AddEndpoint(ctx, g, "fails", func(context.Context, []byte) ([]byte, error) {
+		return nil, WithCode("", errors.New("boom"))
+	}))
+
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := km.Call(cctx, "empty_code_service.fails", []byte("{}"))
+
+	require.Error(t, err, "an empty code must not read as success")
+	assert.Nil(t, resp)
+	code, ok := ErrorCode(err)
+	require.True(t, ok)
+	assert.Equal(t, ErrorCodeInternal, code)
+}
