@@ -133,3 +133,82 @@ func TestKMicro_EmptyCodeStillAnswersAsAFailure(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, ErrorCodeInternal, code)
 }
+
+// A code states what THIS handler decided. A handler that passes a downstream
+// failure on must not republish the downstream module's code as its own answer.
+func TestKMicro_ADownstreamCodeIsNotRepublished(t *testing.T) {
+	km := NewKMicro("hop_service", "0.0.1")
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	g := km.AddGroup("hop_service")
+	require.NoError(t, km.AddEndpoint(ctx, g, "downstream", func(context.Context, []byte) ([]byte, error) {
+		return nil, WithCode(ErrorCodeNotFound, errors.New("gone"))
+	}))
+	require.NoError(t, km.AddEndpoint(ctx, g, "upstream", func(ctx context.Context, _ []byte) ([]byte, error) {
+		_, err := km.Call(ctx, "hop_service.downstream", []byte("{}"))
+		return nil, fmt.Errorf("upstream: %w", err)
+	}))
+
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := km.Call(cctx, "hop_service.upstream", []byte("{}"))
+
+	require.Error(t, err)
+	code, ok := ErrorCode(err)
+	require.True(t, ok)
+	assert.Equal(t, ErrorCodeInternal, code, "the upstream handler decided nothing; it must not answer the downstream code")
+}
+
+// The forward ingress wraps a Call error around its refusal, so an interceptor
+// denial must not inherit whatever the identity check's own dependency answered.
+func TestKMicro_AnInterceptorDenialStillAnswersForbidden(t *testing.T) {
+	km := NewKMicro("ic_code_service", "0.0.1")
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	g := km.AddGroup("ic_code_service")
+	require.NoError(t, km.AddEndpoint(ctx, g, "identity", func(context.Context, []byte) ([]byte, error) {
+		return nil, errors.New("auth is down")
+	}))
+	deny := func(ctx context.Context, _ []byte) error {
+		_, err := km.Call(ctx, "ic_code_service.identity", []byte("{}"))
+		return fmt.Errorf("caller identity check failed: %w", err)
+	}
+	require.NoError(t, km.AddEndpoint(ctx, g, "guarded", func(context.Context, []byte) ([]byte, error) {
+		return []byte("ok"), nil
+	}, WithInterceptor(deny)))
+
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := km.Call(cctx, "ic_code_service.guarded", []byte("{}"))
+
+	require.Error(t, err)
+	code, ok := ErrorCode(err)
+	require.True(t, ok)
+	assert.Equal(t, ErrorCodeForbidden, code, "a refusal must stay a refusal")
+}
+
+// A handler may put its own code anywhere in the chain it returns.
+func TestKMicro_AHandlerMayWrapItsOwnCode(t *testing.T) {
+	km := NewKMicro("wrap_service", "0.0.1")
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	g := km.AddGroup("wrap_service")
+	require.NoError(t, km.AddEndpoint(ctx, g, "gone", func(context.Context, []byte) ([]byte, error) {
+		return nil, fmt.Errorf("read: %w", WithCode(ErrorCodeNotFound, errors.New("gone")))
+	}))
+
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := km.Call(cctx, "wrap_service.gone", []byte("{}"))
+
+	require.Error(t, err)
+	code, ok := ErrorCode(err)
+	require.True(t, ok)
+	assert.Equal(t, ErrorCodeNotFound, code)
+}

@@ -400,7 +400,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 				if ierr := ic(reqCtx, reqData); ierr != nil {
 					span.RecordError(ierr)
 					span.SetStatus(codes.Error, ierr.Error())
-					km.replyError(reply, errorCodeOr(ierr, ErrorCodeForbidden), ierr.Error())
+					km.replyError(reply, replyCode(ierr, ErrorCodeForbidden), ierr.Error())
 					return
 				}
 			}
@@ -411,7 +411,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
 				km.logger.ErrorContext(reqCtx, fmt.Sprintf("handler error (%s): %s", subject, err.Error()))
-				km.replyError(reply, errorCodeOr(err, ErrorCodeInternal), err.Error())
+				km.replyError(reply, replyCode(err, ErrorCodeInternal), err.Error())
 				km.endpointFailedRequests.Add(reqCtx, 1, metricAttrs)
 				return
 			}
@@ -512,7 +512,7 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 		span.SetStatus(codes.Error, errorMsg)
 		span.RecordError(err)
 		km.logger.ErrorContext(ctx, fmt.Sprintf("action error (%s): %s", endpoint, isResponseErrorMsg))
-		return nil, WithCode(isResponseErrorMsg, fmt.Errorf("action error: %s", errorMsg))
+		return nil, &CallError{Code: isResponseErrorMsg, Wrapped: fmt.Errorf("action error: %s", errorMsg)}
 	}
 	km.logger.InfoContext(ctx, "received call response", slog.String("endpoint", endpoint))
 	span.SetStatus(codes.Ok, "")
