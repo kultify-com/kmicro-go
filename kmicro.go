@@ -400,7 +400,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 				if ierr := ic(reqCtx, reqData); ierr != nil {
 					span.RecordError(ierr)
 					span.SetStatus(codes.Error, ierr.Error())
-					km.replyError(reply, "403", ierr.Error())
+					km.replyError(reply, replyCode(ierr, ErrorCodeForbidden), ierr.Error())
 					return
 				}
 			}
@@ -411,7 +411,7 @@ func (km *KMicro) AddEndpoint(ctx context.Context, group *Group, subject string,
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
 				km.logger.ErrorContext(reqCtx, fmt.Sprintf("handler error (%s): %s", subject, err.Error()))
-				km.replyError(reply, "500", err.Error())
+				km.replyError(reply, replyCode(err, ErrorCodeInternal), err.Error())
 				km.endpointFailedRequests.Add(reqCtx, 1, metricAttrs)
 				return
 			}
@@ -506,13 +506,14 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 		km.logger.ErrorContext(ctx, fmt.Sprintf("nats error (%s): %s", endpoint, err.Error()))
 		return nil, err
 	}
-	isResponseErrorMsg := respMsg.Header.Get("Nats-Service-Error-Code")
+	isResponseErrorMsg := respMsg.Header.Get(micro.ErrorCodeHeader)
 	if isResponseErrorMsg != "" {
-		errorMsg := respMsg.Header.Get("Nats-Service-Error")
+		errorMsg := respMsg.Header.Get(micro.ErrorHeader)
+		callErr := &CallError{Code: isResponseErrorMsg, Wrapped: fmt.Errorf("action error: %s", errorMsg)}
 		span.SetStatus(codes.Error, errorMsg)
-		span.RecordError(err)
+		span.RecordError(callErr)
 		km.logger.ErrorContext(ctx, fmt.Sprintf("action error (%s): %s", endpoint, isResponseErrorMsg))
-		return nil, fmt.Errorf("action error: %s", errorMsg)
+		return nil, callErr
 	}
 	km.logger.InfoContext(ctx, "received call response", slog.String("endpoint", endpoint))
 	span.SetStatus(codes.Ok, "")
