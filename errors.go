@@ -2,6 +2,8 @@ package kmicro
 
 import "errors"
 
+// The codes kmicro itself answers with. The vocabulary is open -- any service
+// may answer any string -- and these are the values the estate already sends.
 const (
 	ErrorCodeInternal  = "500"
 	ErrorCodeForbidden = "403"
@@ -42,9 +44,13 @@ func (e *CallError) Error() string {
 
 func (e *CallError) Unwrap() error { return e.Wrapped }
 
+// WithCode declares the code this handler's endpoint answers with. It passes a
+// nil error through, and an empty code through uncoded: Call decides a reply is
+// an error by that header being non-empty, so an empty one would read as
+// success.
 func WithCode(code string, err error) error {
-	if err == nil {
-		return nil
+	if err == nil || code == "" {
+		return err
 	}
 	return &CodedError{Code: code, Wrapped: err}
 }
@@ -61,6 +67,14 @@ func ErrorCode(err error) (string, bool) {
 		return called.Code, true
 	}
 	return "", false
+}
+
+// HasCode reports whether a failure carries exactly this code. Prefer it to
+// comparing what ErrorCode returns: an uncoded error answers the empty string,
+// so the second return is never the term that decides.
+func HasCode(err error, code string) bool {
+	actual, ok := ErrorCode(err)
+	return ok && actual == code
 }
 
 // replyCode is what an endpoint answers with. It reads only what this handler

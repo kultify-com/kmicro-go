@@ -73,7 +73,8 @@ const headerDeadlineKey = "kmicro_deadline_unix_nano"
 type ServiceHandler func(ctx context.Context, data []byte) ([]byte, error)
 
 // EndpointInterceptor runs before a handler; a non-nil error rejects the
-// request with a 403 service error. Use it to scope who may call an endpoint
+// request with a 403 service error, or with whatever code the returned error
+// carries via WithCode. Use it to scope who may call an endpoint
 // (e.g. only platform instances may invoke "<module>.__http").
 type EndpointInterceptor func(ctx context.Context, data []byte) error
 

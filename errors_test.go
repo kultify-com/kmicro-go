@@ -249,3 +249,26 @@ func TestKMicro_AnInterceptorMayChooseItsCode(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, ErrorCodeNotFound, code)
 }
+
+func TestHasCode(t *testing.T) {
+	t.Run("answers true only for the code the failure carries", func(t *testing.T) {
+		err := &CallError{Code: ErrorCodeNotFound, Wrapped: errors.New("gone")}
+
+		assert.True(t, HasCode(err, ErrorCodeNotFound))
+		assert.False(t, HasCode(err, ErrorCodeInternal))
+	})
+
+	t.Run("answers false for an uncoded error", func(t *testing.T) {
+		assert.False(t, HasCode(errors.New("plain"), ErrorCodeNotFound))
+		assert.False(t, HasCode(nil, ErrorCodeNotFound))
+	})
+
+	t.Run("an empty code is never carried, so it never matches", func(t *testing.T) {
+		err := WithCode("", errors.New("boom"))
+
+		assert.False(t, HasCode(err, ""))
+		code, ok := ErrorCode(err)
+		assert.False(t, ok, "WithCode must pass an empty code through uncoded")
+		assert.Empty(t, code)
+	})
+}
