@@ -224,3 +224,28 @@ func TestCodedErrorsSurviveANilWrapped(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, ErrorCodeNotFound, code)
 }
+
+// An interceptor may choose its own code; "403" is only the fallback.
+func TestKMicro_AnInterceptorMayChooseItsCode(t *testing.T) {
+	km := NewKMicro("ic_choice_service", "0.0.1")
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	deny := func(context.Context, []byte) error {
+		return WithCode(ErrorCodeNotFound, errors.New("no such tenant"))
+	}
+	g := km.AddGroup("ic_choice_service")
+	require.NoError(t, km.AddEndpoint(ctx, g, "guarded", func(context.Context, []byte) ([]byte, error) {
+		return []byte("ok"), nil
+	}, WithInterceptor(deny)))
+
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := km.Call(cctx, "ic_choice_service.guarded", []byte("{}"))
+
+	require.Error(t, err)
+	code, ok := ErrorCode(err)
+	require.True(t, ok)
+	assert.Equal(t, ErrorCodeNotFound, code)
+}
