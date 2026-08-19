@@ -183,11 +183,14 @@ func WithNatsConnection(conn *nats.Conn) StartOption {
 // attempts closes the connection for good after about two minutes of downtime,
 // which is a retry limit on a transient failure: the node stays up, and every
 // call on it fails from then on. The default two-second pace between attempts
-// stands. micro.AddService wraps the closed handler rather than replacing it,
-// so the report survives on a node that registers a service.
+// stands. The closed handler reports a close the node did not ask for — Stop
+// closes this connection too, and that is not a dead bus. micro.AddService
+// wraps the handler rather than replacing it, so the report survives on a node
+// that registers a service.
 func natsConnectOptions(url string, logger *slog.Logger) []nats.Option {
 	return []nats.Option{
 		nats.MaxReconnects(-1),
+		nats.NoCallbacksAfterClientClose(),
 		nats.ClosedHandler(func(nc *nats.Conn) {
 			logger.Error("nats connection closed, the bus is gone", "url", url, "error", nc.LastError())
 		}),
