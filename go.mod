@@ -80,3 +80,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+retract v0.6.2 // Closed handler logs a false error on every graceful shutdown; use v0.6.3.
