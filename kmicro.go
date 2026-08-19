@@ -179,6 +179,21 @@ func WithNatsConnection(conn *nats.Conn) StartOption {
 	}
 }
 
+// natsConnectOptions dials with unlimited reconnects. nats.go's default of 60
+// attempts closes the connection for good after about two minutes of downtime,
+// which is a retry limit on a transient failure: the node stays up, and every
+// call on it fails from then on. The default two-second pace between attempts
+// stands. micro.AddService wraps the closed handler rather than replacing it,
+// so the report survives on a node that registers a service.
+func natsConnectOptions(url string, logger *slog.Logger) []nats.Option {
+	return []nats.Option{
+		nats.MaxReconnects(-1),
+		nats.ClosedHandler(func(nc *nats.Conn) {
+			logger.Error("nats connection closed, the bus is gone", "url", url, "error", nc.LastError())
+		}),
+	}
+}
+
 // Connect to nats and setup the micro service
 // Use [AddEndpoints] to add endpoints to the service
 func (km *KMicro) Start(ctx context.Context, options ...StartOption) error {
@@ -209,7 +224,7 @@ func (km *KMicro) Start(ctx context.Context, options ...StartOption) error {
 	}
 	if startOpts.natsURL != "" {
 		km.logger.Info("connecting to nats...")
-		nc, err := nats.Connect(startOpts.natsURL)
+		nc, err := nats.Connect(startOpts.natsURL, natsConnectOptions(startOpts.natsURL, km.logger)...)
 		if err != nil {
 			return err
 		}
