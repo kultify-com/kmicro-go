@@ -478,12 +478,8 @@ func (km *KMicro) Call(ctx context.Context, endpoint string, data []byte) ([]byt
 	header := make(nats.Header)
 
 	// prevent infinite loops
-	callDepth := 0
-	callDepthStr, ok := ctx.Value(callDepthCtxKey).(string)
-	if ok {
-		val, _ := strconv.Atoi(callDepthStr)
-		callDepth = val + 1
-	}
+	callDepth, _ := ctx.Value(callDepthCtxKey).(int)
+	callDepth++
 	if callDepth > 20 {
 		return nil, maxCallDepthErr
 	}

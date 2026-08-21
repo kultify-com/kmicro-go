@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
+	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,6 +121,48 @@ func TestKMicro(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "some error")
 	})
+}
+
+func TestKMicro_CallDepthGuardStopsACycle(t *testing.T) {
+	serviceName := "cycle_service"
+	km := NewKMicro(serviceName, "0.0.1", WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	ctx := context.Background()
+	require.NoError(t, km.Start(ctx, WithNatsURL(natsURL)))
+	defer km.Stop()
+
+	var invocations atomic.Int64
+	guarded := make(chan error, 1)
+
+	hop := func(next string) ServiceHandler {
+		return func(ctx context.Context, data []byte) ([]byte, error) {
+			invocations.Add(1)
+			result, err := km.Call(ctx, serviceName+"."+next, data)
+			if errors.Is(err, maxCallDepthErr) {
+				select {
+				case guarded <- err:
+				default:
+				}
+			}
+			return result, err
+		}
+	}
+
+	g := km.AddGroup(serviceName)
+	require.NoError(t, km.AddEndpoint(ctx, g, "a", hop("b")))
+	require.NoError(t, km.AddEndpoint(ctx, g, "b", hop("a")))
+
+	callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_, err := km.Call(callCtx, serviceName+".a", []byte(`{}`))
+	require.Error(t, err, "a cycle must not answer successfully")
+
+	select {
+	case guardErr := <-guarded:
+		assert.ErrorIs(t, guardErr, maxCallDepthErr)
+	default:
+		t.Fatalf("no handler saw maxCallDepthErr; the cycle ended some other way: %v", err)
+	}
+	assert.Equal(t, int64(20), invocations.Load(), "the cycle must stop at the 20th hop")
 }
 
 func TestKMicro_DeadlinePropagation(t *testing.T) {
